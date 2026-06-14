@@ -525,7 +525,7 @@ function BiensSuivisView({ biens, contacts, onOpenBien }) {
   </div>);
 }
 
-export default function App() {
+function App() {
   const [biens, setBiens] = useStorage(STORAGE_BIENS);
   const [contacts, setContacts] = useStorage(STORAGE_CONTACTS);
   const [tabs, setTabs] = useState([{id:'search',type:'search',label:'Recherche'}]);
