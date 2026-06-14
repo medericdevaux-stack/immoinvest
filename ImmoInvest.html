@@ -226,7 +226,7 @@ function ContactInfoBlock({ bien, contacts, onLink, onAdd }) {
 }
 
 function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
-  const [filters, setFilters] = useState({ cp:'86000', prixMin:'', prixMax:500000, surfaceMin:200, type:'9', rendMin:'', contactId:'' });
+  const [filters, setFilters] = useState({ cp:'86000', prixMin:'', prixMax:'', surfaceMin:'', type:'9', rendMin:'', contactId:'' });
   const [cpQuery, setCpQuery] = useState('86000 – Poitiers');
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(false);
