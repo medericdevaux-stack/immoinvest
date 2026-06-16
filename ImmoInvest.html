@@ -45,6 +45,7 @@ const { useState, useCallback, useEffect, useRef } = React;
 const APPS_SCRIPT_URL = 'https://immoinvest-proxy.mederic-de-vaux.workers.dev';
 const STORAGE_BIENS = 'immo_invest_biens_v3';
 const STORAGE_CONTACTS = 'immo_invest_contacts_v3';
+const STORAGE_LISTINGS = 'immo_invest_listings_v3';
 const FRAIS_NOTAIRE_DEFAULT = 0.08;
 const FRAIS_AGENCE_DEFAULT = 0.05;
 
@@ -228,7 +229,14 @@ function ContactInfoBlock({ bien, contacts, onLink, onAdd }) {
 function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
   const [filters, setFilters] = useState({ cp:'86000', prixMin:'', prixMax:'', surfaceMin:'', type:'9', rendMin:'', contactId:'' });
   const [cpQuery, setCpQuery] = useState('86000 – Poitiers');
-  const [listings, setListings] = useState([]);
+  const [listings, setListingsState] = useState(() => {
+    try { const s = localStorage.getItem(STORAGE_LISTINGS); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
+  const setListings = (val) => {
+    const next = typeof val === 'function' ? val(listings) : val;
+    setListingsState(next);
+    try { localStorage.setItem(STORAGE_LISTINGS, JSON.stringify(next)); } catch {}
+  };
   const [loading, setLoading] = useState(false);
   const [loadingSheet, setLoadingSheet] = useState(false);
   const [analysingTravaux, setAnalysingTravaux] = useState(false);
@@ -317,18 +325,47 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
     const a=document.createElement('a'); a.href='data:text/csv;charset=utf-8,'+encodeURIComponent('\uFEFF'+csv); a.download='immo_invest.csv'; a.click();
   };
 
+  const [sortCol, setSortCol] = useState('rendement');
+  const [sortDir, setSortDir] = useState('desc');
+  const toggleSort = (col) => { if (sortCol===col) setSortDir(d=>d==='asc'?'desc':'asc'); else { setSortCol(col); setSortDir('desc'); } };
+  const SortIcon = ({col}) => sortCol===col ? (sortDir==='asc'?'↑':'↓') : <span style={{opacity:0.3}}>↕</span>;
+
+  const displayed = listings
+    .map(l=>({...l,...biens[l.id]}))
+    .filter(l => {
+      if (filters.contactId && l.contactId !== filters.contactId) return false;
+      if (filters.prixMin && l.price < Number(filters.prixMin)) return false;
+      if (filters.prixMax && l.price > Number(filters.prixMax)) return false;
+      if (filters.surfaceMin && l.surface < Number(filters.surfaceMin)) return false;
+      if (filters.rendMin && l.rendement && l.rendement < Number(filters.rendMin)) return false;
+      if (filters.statut && l.statut !== filters.statut) return false;
+      return true;
+    })
+    .sort((a,b) => {
+      let va, vb;
+      if (sortCol==='price') { va=a.price||0; vb=b.price||0; }
+      else if (sortCol==='surface') { va=a.surface||0; vb=b.surface||0; }
+      else if (sortCol==='loyers') { va=a.loyers||0; vb=b.loyers||0; }
+      else if (sortCol==='ppm2') { va=a.ppm2||0; vb=b.ppm2||0; }
+      else if (sortCol==='rendement') { va=a.rendement||0; vb=b.rendement||0; }
+      else if (sortCol==='statut') { va=a.statut||''; vb=b.statut||''; return sortDir==='asc'?va.localeCompare(vb):vb.localeCompare(va); }
+      else if (sortCol==='title') { va=a.title||''; vb=b.title||''; return sortDir==='asc'?va.localeCompare(vb):vb.localeCompare(va); }
+      else { va=a.rendement||0; vb=b.rendement||0; }
+      return sortDir==='asc' ? va-vb : vb-va;
+    });
+
   const inp = { fontSize:12, padding:'4px 7px', borderRadius:6, border:'0.5px solid var(--color-border-secondary)', background:'var(--color-background-primary)', color:'var(--color-text-primary)', width:'100%' };
-  const displayed = listings.map(l=>({...l,...biens[l.id]})).filter(l => !filters.contactId || l.contactId===filters.contactId);
 
   return (
     <div style={{padding:'14px 16px'}}>
       <div style={{background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'12px 14px',marginBottom:12}}>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr 1fr 1fr 1fr',gap:8,marginBottom:8}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr',gap:8,marginBottom:8}}>
           {[['Code postal',<input key="cp" value={cpQuery} onChange={e=>{setCpQuery(e.target.value);setFilters(f=>({...f,cp:e.target.value.split(/[\s–-]/)[0]}));}} style={inp}/>],
             ['Prix min (€)',<input key="pmin" type="number" value={filters.prixMin} onChange={e=>setFilters(f=>({...f,prixMin:e.target.value}))} placeholder="0" style={inp}/>],
             ['Prix max (€)',<input key="pmax" type="number" value={filters.prixMax} onChange={e=>setFilters(f=>({...f,prixMax:e.target.value}))} style={inp}/>],
             ['Surface min',<input key="surf" type="number" value={filters.surfaceMin} onChange={e=>setFilters(f=>({...f,surfaceMin:e.target.value}))} style={inp}/>],
             ['Rendement min',<input key="rend" type="number" value={filters.rendMin} onChange={e=>setFilters(f=>({...f,rendMin:e.target.value}))} placeholder="8" style={inp}/>],
+            ['Statut',<select key="statut" value={filters.statut||''} onChange={e=>setFilters(f=>({...f,statut:e.target.value}))} style={inp}><option value="">Tous</option>{STATUTS.map(s=><option key={s}>{s}</option>)}</select>],
             ['Type',<select key="type" value={filters.type} onChange={e=>setFilters(f=>({...f,type:e.target.value}))} style={inp}>{TYPES_BIEN.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}</select>],
             ['Contact',<select key="contact" value={filters.contactId} onChange={e=>setFilters(f=>({...f,contactId:e.target.value}))} style={inp}><option value="">Tous</option>{Object.values(contacts).map(c=><option key={c.id} value={c.id}>{c.nom}</option>)}</select>],
           ].map(([label,input])=>(<div key={label}><div style={{fontSize:10,color:'var(--color-text-tertiary)',marginBottom:3}}>{label}</div>{input}</div>))}
@@ -353,7 +390,11 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
         <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'var(--color-text-secondary)',cursor:'pointer',marginBottom:8}}><input type="checkbox" checked={showEcartes} onChange={e=>setShowEcartes(e.target.checked)}/>Afficher les biens écartés</label>
         <div style={{border:'0.5px solid var(--color-border-tertiary)',borderRadius:'var(--border-radius-md)',overflow:'hidden'}}>
           <div style={{display:'grid',gridTemplateColumns:'2fr .6fr .8fr .8fr .8fr .7fr .8fr .8fr 90px',gap:4,padding:'6px 10px',fontSize:10,color:'var(--color-text-tertiary)',borderBottom:'0.5px solid var(--color-border-tertiary)',background:'var(--color-background-secondary)'}}>
-            {['Bien','CP','Prix','Surface','Loyers/an','€/m²','Rendement','Contact','Statut'].map(h=><span key={h}>{h}</span>)}
+            {[['title','Bien'],['cp','CP'],['price','Prix'],['surface','Surface'],['loyers','Loyers/an'],['ppm2','€/m²'],['rendement','Rendement'],['_contact','Contact'],['statut','Statut']].map(([col,label])=>(
+              <span key={col} onClick={!col.startsWith('_')?()=>toggleSort(col):undefined} style={{cursor:!col.startsWith('_')?'pointer':'default',userSelect:'none',display:'inline-flex',alignItems:'center',gap:2}}>
+                {label}{!col.startsWith('_')&&<span style={{opacity:sortCol===col?1:0.3,fontSize:9}}>{sortCol===col?(sortDir==='asc'?'↑':'↓'):'↕'}</span>}
+              </span>
+            ))}
           </div>
           {displayed.filter(l=>showEcartes||l.statut!=='Écarté').map(l=>{
             const contact=l.contactId?contacts[l.contactId]:null; const ecarte=l.statut==='Écarté';
@@ -419,7 +460,7 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
           <PctField label="Frais agence" value={fa} onChange={v=>update({fraisAgence:v})} prix={bien.price}/>
           <div style={{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:12}}><span style={{color:'var(--color-text-secondary)'}}>Prix de revient</span><span style={{fontWeight:500}}>{Math.round(prixRevient).toLocaleString('fr-FR')} €</span></div>
         </div>
-        <div style={{gridColumn:'1/-1',background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px',fontSize:12,color:'var(--color-text-secondary)',lineHeight:1.6}}><div style={{fontSize:11,fontWeight:500,marginBottom:6,textTransform:'uppercase'}}>Description</div>{bien.desc||'—'}</div>
+        <div style={{gridColumn:'1/-1',background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px',fontSize:12,color:'var(--color-text-secondary)',lineHeight:1.6}}><div style={{fontSize:11,fontWeight:500,marginBottom:6,textTransform:'uppercase'}}>Description</div>{bien.desc||bien.notes||<span style={{fontStyle:'italic',color:'var(--color-text-tertiary)'}}>Non disponible — description non transmise par la Sheet (champ à vérifier dans le GAS)</span>}</div>
       </div>)}
       {activeTab==='credit'&&(<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
         <div style={{border:'0.5px solid var(--color-border-tertiary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px'}}><div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',marginBottom:8,textTransform:'uppercase'}}>Paramètres</div><F label="Prix de revient" val={Math.round(prixRevient).toLocaleString('fr-FR')+' €'}/><F label="Apport (€)" val={bien.creditApport} edit="creditApport"/><F label="Montant emprunté" val={Math.round(montantCredit).toLocaleString('fr-FR')+' €'}/><F label="Durée (ans)" val={bien.creditDuree} edit="creditDuree"/><F label="Taux (%)" val={bien.creditTaux} edit="creditTaux"/></div>
@@ -573,7 +614,7 @@ function App() {
   return (
     <div style={{display:'flex',height:'100vh',fontFamily:'var(--font-sans)'}}>
       <div style={{width:164,background:'var(--color-background-secondary)',borderRight:'0.5px solid var(--color-border-tertiary)',display:'flex',flexDirection:'column',padding:'14px 0',flexShrink:0}}>
-        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v24 · LeBonCoin</span></div>
+        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v25 · LeBonCoin</span></div>
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'4px 14px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Biens</div>
         {navItems.filter(n=>n.section==='biens').map(item=>(<div key={item.id} onClick={()=>handleNav(item.id)} style={{padding:'7px 14px',fontSize:12,color:navSection===item.id?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection===item.id?'var(--color-background-primary)':'transparent',borderRight:navSection===item.id?'2px solid #378ADD':'none',cursor:'pointer',fontWeight:navSection===item.id?500:400}}>{item.label}</div>))}
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'10px 14px 4px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Contacts</div>
