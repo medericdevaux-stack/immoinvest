@@ -57,6 +57,23 @@ async function syncFieldToSheet(id, field, value) {
   } catch(e) { console.warn('syncFieldToSheet failed', e); }
 }
 
+// Ajoute une interaction dans la Sheet Interactions dédiée
+async function pushInteractionToSheet(interaction, bienId, bienTitle) {
+  try {
+    const p = new URLSearchParams({
+      action:    'addInteraction',
+      id:        String(interaction.id),
+      bienId:    String(bienId),
+      bienTitle: bienTitle || '',
+      type:      interaction.type || '',
+      date:      interaction.date || '',
+      auteur:    interaction.auteur || '',
+      note:      interaction.note || '',
+    });
+    await fetch(`${APPS_SCRIPT_URL}?${p.toString()}`);
+  } catch(e) { console.warn('pushInteractionToSheet failed', e); }
+}
+
 const TYPES_BIEN = [
   { id: "9", label: "Tous" }, { id: "9_5", label: "Immeuble" },
   { id: "9_7", label: "Local commercial" }, { id: "9_1", label: "Appartement" }, { id: "9_2", label: "Maison" },
@@ -449,8 +466,8 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
     const interactions = [...(bien.interactions||[]), newInt];
     const b = {...bien, interactions};
     setBien(b); onUpdate(b);
-    // Sync interactions vers Sheet
-    syncFieldToSheet(b.id, 'interactions', interactions);
+    // Push vers Sheet Interactions dédiée
+    pushInteractionToSheet(newInt, bien.id, bien.title);
     setNi(i=>({...i, note:''}));
   };
 
