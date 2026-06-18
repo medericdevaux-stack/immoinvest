@@ -446,7 +446,35 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
   const [bien, setBien] = useState(init);
   const [activeTab, setActiveTab] = useState('detail');
   const [ni, setNi] = useState({ type:'Appel', date:new Date().toISOString().slice(0,10), note:'', auteur:'' });
-  useEffect(() => { setBien(init); }, [init.id]);
+  const [iaLoading, setIaLoading] = useState(false);
+  const [iaResult, setIaResult] = useState(null);
+  const [iaError, setIaError] = useState(null);
+  useEffect(() => { setBien(init); setIaResult(null); setIaError(null); }, [init.id]);
+
+  const analyzeWithIA = async () => {
+    if (!bien.desc) { setIaError('Pas de description disponible — relance le bookmarklet pour importer ce bien.'); return; }
+    setIaLoading(true); setIaResult(null); setIaError(null);
+    try {
+      const res = await fetch(`${APPS_SCRIPT_URL}?action=analyzeAnnonce&id=${encodeURIComponent(bien.id)}`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Erreur inconnue');
+      setIaResult(data.result);
+      // Mettre à jour le bien local avec les nouveaux champs
+      const patch = {};
+      if (data.result.loyer_actuel)       patch.loyers = data.result.loyer_actuel;
+      if (data.result.loyer_potentiel)    patch.loyer_potentiel = data.result.loyer_potentiel;
+      if (data.result.dpe)                patch.dpe = data.result.dpe;
+      if (data.result.ges)                patch.ges = data.result.ges;
+      if (data.result.nb_lots)            patch.nb_lots = data.result.nb_lots;
+      if (data.result.annee_construction) patch.annee_construction = data.result.annee_construction;
+      if (data.result.travaux_type)       patch.travaux_type = data.result.travaux_type;
+      if (data.result.travaux_resume)     patch.travaux_resume = data.result.travaux_resume;
+      if (data.result.type_bien_ia)       patch.type_bien_ia = data.result.type_bien_ia;
+      patch.ia_analysed = new Date().toISOString().slice(0,10);
+      update(patch);
+    } catch(err) { setIaError(err.message); }
+    finally { setIaLoading(false); }
+  };
 
   const update = (patch) => {
     const b = {...bien,...patch};
@@ -504,6 +532,7 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
         <div style={{display:'flex',gap:6,alignItems:'center'}}>
           <select value={bien.statut} onChange={e=>update({statut:e.target.value})} style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',background:'var(--color-background-primary)',color:'var(--color-text-primary)'}}>{STATUTS.map(s=><option key={s}>{s}</option>)}</select>
           {!bien.expired&&<button onClick={()=>update({expired:true})} style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'0.5px solid #F7C1C1',background:'#FCEBEB',color:'#791F1F',cursor:'pointer'}}>Marquer expirée</button>}
+          <button onClick={analyzeWithIA} disabled={iaLoading||!bien.desc} style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'0.5px solid #C0DD97',background:bien.desc?'#EAF3DE':'var(--color-background-secondary)',color:bien.desc?'#27500A':'var(--color-text-tertiary)',cursor:bien.desc?'pointer':'not-allowed'}}>{iaLoading?'⏳ Analyse…':'🤖 Analyser'}</button>
           <a href={bien.url} target="_blank" rel="noreferrer" style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',color:'var(--color-text-secondary)',textDecoration:'none'}}>Voir ↗</a>
         </div>
       </div>
@@ -539,6 +568,37 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
           <div style={{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:12}}><span style={{color:'var(--color-text-secondary)'}}>Prix de revient</span><span style={{fontWeight:500}}>{Math.round(prixRevient).toLocaleString('fr-FR')} €</span></div>
         </div>
         <div style={{gridColumn:'1/-1',background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px',fontSize:12,color:'var(--color-text-secondary)',lineHeight:1.6}}><div style={{fontSize:11,fontWeight:500,marginBottom:6,textTransform:'uppercase'}}>Description</div>{bien.desc||bien.notes||<span style={{fontStyle:'italic',color:'var(--color-text-tertiary)'}}>Non disponible — relance le bookmarklet pour récupérer les descriptions.</span>}</div>
+
+        {iaError&&<div style={{gridColumn:'1/-1',background:'#FCEBEB',border:'0.5px solid #F7C1C1',borderRadius:8,padding:'8px 12px',fontSize:12,color:'#791F1F'}}>⚠ {iaError}</div>}
+
+        {iaResult&&<div style={{gridColumn:'1/-1',border:'0.5px solid #C0DD97',borderRadius:'var(--border-radius-md)',padding:'12px',background:'#EAF3DE'}}>
+          <div style={{fontSize:11,fontWeight:500,color:'#27500A',marginBottom:10,textTransform:'uppercase',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span>🤖 Analyse IA</span>
+            <span style={{fontSize:10,fontWeight:400,color:'#27500A',opacity:0.7}}>Vérifie et valide avant de sauvegarder</span>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:10}}>
+            {[
+              ['Loyer actuel',     iaResult.loyer_actuel     ? iaResult.loyer_actuel.toLocaleString('fr-FR')+' €/an' : '—'],
+              ['Loyer potentiel',  iaResult.loyer_potentiel  ? iaResult.loyer_potentiel.toLocaleString('fr-FR')+' €/an' : '—'],
+              ['DPE / GES',        [iaResult.dpe, iaResult.ges].filter(Boolean).join(' / ') || '—'],
+              ['Rendement brut',   iaResult.rendement_brut   ? iaResult.rendement_brut+'%' : '—'],
+              ['Nb lots',          iaResult.nb_lots          || '—'],
+              ['Année construction',iaResult.annee_construction || '—'],
+              ['Type bien',        iaResult.type_bien_ia     || '—'],
+              ['Travaux',          iaResult.travaux_type     || '—'],
+            ].map(([label,val])=>(
+              <div key={label} style={{background:'#fff',borderRadius:6,padding:'6px 8px',border:'0.5px solid #C0DD97'}}>
+                <div style={{fontSize:10,color:'#27500A',opacity:0.7,marginBottom:2}}>{label}</div>
+                <div style={{fontSize:12,fontWeight:500,color:'#27500A'}}>{val}</div>
+              </div>
+            ))}
+          </div>
+          {iaResult.travaux_resume&&<div style={{fontSize:12,color:'#27500A',marginBottom:10,padding:'6px 8px',background:'#fff',borderRadius:6,border:'0.5px solid #C0DD97'}}><span style={{fontWeight:500}}>Travaux : </span>{iaResult.travaux_resume}</div>}
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={()=>setIaResult(null)} style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:'0.5px solid #C0DD97',background:'#fff',color:'#27500A',cursor:'pointer'}}>✅ Validé — fermer</button>
+            <button onClick={()=>{update({loyers:iaResult.loyer_actuel||bien.loyers});setIaResult(null);}} style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:'0.5px solid #C0DD97',background:'#27500A',color:'#fff',cursor:'pointer'}}>💾 Appliquer loyer actuel</button>
+          </div>
+        </div>}
       </div>)}
 
       {activeTab==='credit'&&(<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
@@ -706,7 +766,7 @@ function App() {
   return (
     <div style={{display:'flex',height:'100vh',fontFamily:'var(--font-sans)'}}>
       <div style={{width:164,background:'var(--color-background-secondary)',borderRight:'0.5px solid var(--color-border-tertiary)',display:'flex',flexDirection:'column',padding:'14px 0',flexShrink:0}}>
-        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v26 · LeBonCoin</span></div>
+        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v27 · LeBonCoin + IA</span></div>
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'4px 14px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Biens</div>
         {navItems.filter(n=>n.section==='biens').map(item=>(<div key={item.id} onClick={()=>handleNav(item.id)} style={{padding:'7px 14px',fontSize:12,color:navSection===item.id?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection===item.id?'var(--color-background-primary)':'transparent',borderRight:navSection===item.id?'2px solid #378ADD':'none',cursor:'pointer',fontWeight:navSection===item.id?500:400}}>{item.label}</div>))}
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'10px 14px 4px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Contacts</div>
