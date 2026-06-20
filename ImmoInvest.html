@@ -569,6 +569,30 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
         </div>
         <div style={{gridColumn:'1/-1',background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px',fontSize:12,color:'var(--color-text-secondary)',lineHeight:1.6}}><div style={{fontSize:11,fontWeight:500,marginBottom:6,textTransform:'uppercase'}}>Description</div>{bien.desc||bien.notes||<span style={{fontStyle:'italic',color:'var(--color-text-tertiary)'}}>Non disponible — relance le bookmarklet pour récupérer les descriptions.</span>}</div>
 
+        {bien.ia_analysed&&!iaResult&&<div style={{gridColumn:'1/-1',border:'0.5px solid #C0DD97',borderRadius:'var(--border-radius-md)',padding:'10px 12px',background:'#F4FAF0'}}>
+          <div style={{fontSize:11,fontWeight:500,color:'#27500A',marginBottom:8,textTransform:'uppercase',display:'flex',justifyContent:'space-between'}}>
+            <span>🤖 Données IA</span>
+            <span style={{fontSize:10,fontWeight:400,opacity:0.7}}>Analysé le {bien.ia_analysed}</span>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6}}>
+            {[
+              ['Loyer actuel',      bien.loyer_actuel      ? Number(bien.loyer_actuel).toLocaleString('fr-FR')+' €/an' : '—'],
+              ['Loyer potentiel',   bien.loyer_potentiel   ? Number(bien.loyer_potentiel).toLocaleString('fr-FR')+' €/an' : '—'],
+              ['DPE / GES',        [bien.dpe, bien.ges].filter(Boolean).join(' / ') || '—'],
+              ['Nb lots',           bien.nb_lots           || '—'],
+              ['Année construction',bien.annee_construction || '—'],
+              ['Type bien',         bien.type_bien_ia      || '—'],
+              ['Travaux',           bien.travaux_type      || '—'],
+              ['Résumé travaux',    bien.travaux_resume    || '—'],
+            ].map(([label,val])=>(
+              <div key={label} style={{background:'#fff',borderRadius:6,padding:'5px 8px',border:'0.5px solid #C0DD97'}}>
+                <div style={{fontSize:10,color:'#27500A',opacity:0.7,marginBottom:1}}>{label}</div>
+                <div style={{fontSize:12,fontWeight:500,color:'#27500A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{val}</div>
+              </div>
+            ))}
+          </div>
+        </div>}
+
         {iaError&&<div style={{gridColumn:'1/-1',background:'#FCEBEB',border:'0.5px solid #F7C1C1',borderRadius:8,padding:'8px 12px',fontSize:12,color:'#791F1F'}}>⚠ {iaError}</div>}
 
         {iaResult&&<div style={{gridColumn:'1/-1',border:'0.5px solid #C0DD97',borderRadius:'var(--border-radius-md)',padding:'12px',background:'#EAF3DE'}}>
@@ -733,6 +757,84 @@ function BiensSuivisView({ biens, contacts, onOpenBien }) {
   </div>);
 }
 
+function InteractionsView({ biens, onOpenBien }) {
+  const [interactions, setInteractions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [filterType, setFilterType] = useState('');
+  const [filterAuteur, setFilterAuteur] = useState('');
+  const [filterBien, setFilterBien] = useState('');
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    setLoading(true); setError('');
+    try {
+      const res = await fetch(`${APPS_SCRIPT_URL}?action=getInteractions`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error||'Erreur inconnue');
+      // Trier par date décroissante
+      const sorted = (data.interactions||[]).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+      setInteractions(sorted);
+    } catch(e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const auteurs = [...new Set(interactions.map(i=>i.auteur).filter(Boolean))];
+  const bienIds = [...new Set(interactions.map(i=>i.bienId).filter(Boolean))];
+
+  const filtered = interactions.filter(i => {
+    if (filterType   && i.type    !== filterType)   return false;
+    if (filterAuteur && i.auteur  !== filterAuteur) return false;
+    if (filterBien   && i.bienId  !== filterBien)   return false;
+    return true;
+  });
+
+  const TYPE_COLORS = {Appel:'#E6F1FB|#0C447C|#B5D4F4',Email:'#EEEDFE|#3C3489|#AFA9EC',RDV:'#EAF3DE|#27500A|#C0DD97',Visite:'#E1F5EE|#085041|#5DCAA5',SMS:'#FAEEDA|#633806|#FAC775',Note:'#F3F4F6|#374151|#D1D5DB'};
+  const typeStyle = (type) => { const [bg,text,border]=(TYPE_COLORS[type]||TYPE_COLORS.Note).split('|'); return {background:bg,color:text,border:`0.5px solid ${border}`,borderRadius:4,padding:'1px 6px',fontSize:10,fontWeight:500,flexShrink:0}; };
+
+  return (
+    <div style={{padding:'14px 16px'}}>
+      <div style={{display:'flex',gap:8,marginBottom:12,alignItems:'center',flexWrap:'wrap'}}>
+        <select value={filterType} onChange={e=>setFilterType(e.target.value)} style={{fontSize:12,padding:'5px 8px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',background:'var(--color-background-primary)',color:'var(--color-text-primary)'}}>
+          <option value="">Tous types</option>{INT_TYPES.map(t=><option key={t}>{t}</option>)}
+        </select>
+        <select value={filterAuteur} onChange={e=>setFilterAuteur(e.target.value)} style={{fontSize:12,padding:'5px 8px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',background:'var(--color-background-primary)',color:'var(--color-text-primary)'}}>
+          <option value="">Tous auteurs</option>{auteurs.map(a=><option key={a}>{a}</option>)}
+        </select>
+        <select value={filterBien} onChange={e=>setFilterBien(e.target.value)} style={{fontSize:12,padding:'5px 8px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',background:'var(--color-background-primary)',color:'var(--color-text-primary)'}}>
+          <option value="">Tous biens</option>{bienIds.map(id=>{const b=biens[id]; return <option key={id} value={id}>{b?b.title.slice(0,30):id}</option>;})}
+        </select>
+        <button onClick={load} style={{fontSize:12,padding:'5px 12px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',background:'transparent',color:'var(--color-text-secondary)',cursor:'pointer',marginLeft:'auto'}}>{loading?'⏳':'↻'} Actualiser</button>
+        <span style={{fontSize:11,color:'var(--color-text-tertiary)'}}>{filtered.length} interaction(s)</span>
+      </div>
+      {error&&<div style={{fontSize:12,color:'#791F1F',background:'#FCEBEB',border:'0.5px solid #F7C1C1',borderRadius:8,padding:'7px 10px',marginBottom:10}}>{error}</div>}
+      {!loading&&filtered.length===0&&<div style={{textAlign:'center',padding:'3rem 0',color:'var(--color-text-tertiary)',fontSize:13}}>Aucune interaction.</div>}
+      <div style={{border:'0.5px solid var(--color-border-tertiary)',borderRadius:'var(--border-radius-md)',overflow:'hidden'}}>
+        {filtered.length>0&&<div style={{display:'grid',gridTemplateColumns:'80px 90px 90px 1fr 80px',gap:4,padding:'6px 10px',fontSize:10,color:'var(--color-text-tertiary)',borderBottom:'0.5px solid var(--color-border-tertiary)',background:'var(--color-background-secondary)'}}>
+          {['Type','Date','Auteur','Bien · Note',''].map(h=><span key={h}>{h}</span>)}
+        </div>}
+        {filtered.map(i => {
+          const b = biens[i.bienId];
+          return (
+            <div key={i.id} style={{display:'grid',gridTemplateColumns:'80px 90px 90px 1fr 80px',gap:4,padding:'8px 10px',fontSize:12,borderBottom:'0.5px solid var(--color-border-tertiary)',alignItems:'center'}}
+              onMouseEnter={e=>e.currentTarget.style.background='var(--color-background-secondary)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+              <span style={typeStyle(i.type)}>{i.type}</span>
+              <span style={{color:'var(--color-text-secondary)',fontSize:11}}>{i.date}</span>
+              <span style={{fontSize:11,color:'#378ADD'}}>{i.auteur?'@'+i.auteur:'—'}</span>
+              <div style={{minWidth:0}}>
+                {b&&<span style={{fontSize:10,color:'var(--color-text-tertiary)',display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.title}</span>}
+                <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'block'}}>{i.note}</span>
+              </div>
+              {b&&<button onClick={()=>onOpenBien(b)} style={{fontSize:10,padding:'2px 6px',borderRadius:5,border:'0.5px solid #B5D4F4',background:'#E6F1FB',color:'#0C447C',cursor:'pointer'}}>Voir bien</button>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [biens, setBiens] = useStorage(STORAGE_BIENS);
   const [contacts, setContacts] = useStorage(STORAGE_CONTACTS);
@@ -756,21 +858,23 @@ function App() {
     if(currentTab.type==='search')return <SearchView onOpenBien={openBien} biens={biens} updateBien={updateBien} setBiens={setBiens} contacts={contacts}/>;
     if(currentTab.type==='suivis')return <BiensSuivisView biens={biens} contacts={contacts} onOpenBien={openBien}/>;
     if(currentTab.type==='annuaire')return <AnnuaireView contacts={contacts} setContacts={setContacts} biens={biens} onOpenContact={openContact}/>;
+    if(currentTab.type==='interactions')return <InteractionsView biens={biens} onOpenBien={openBien}/>;
     if(currentTab.type==='bien'){const b=biens[currentTab.data?.id]||currentTab.data;return b?<BienDetail bien={b} onUpdate={updateBien} contacts={contacts} setContacts={setContacts} onOpenContact={openContact}/>:null;}
     if(currentTab.type==='contact'){const c=contacts[currentTab.data?.id]||currentTab.data;return c?<ContactDetail contact={c} onUpdate={updateContact} biens={biens} onOpenBien={openBien} onDelete={deleteContact}/>:null;}
     return null;
   };
 
-  const navItems=[{id:'search',section:'biens',label:'Recherche'},{id:'suivis',section:'biens',label:'Biens suivis'},{id:'annuaire',section:'contacts',label:'Annuaire'}];
+  const navItems=[{id:'search',section:'biens',label:'Recherche'},{id:'suivis',section:'biens',label:'Biens suivis'},{id:'annuaire',section:'contacts',label:'Annuaire'},{id:'interactions',section:'contacts',label:'CRM — Interactions'}];
 
   return (
     <div style={{display:'flex',height:'100vh',fontFamily:'var(--font-sans)'}}>
       <div style={{width:164,background:'var(--color-background-secondary)',borderRight:'0.5px solid var(--color-border-tertiary)',display:'flex',flexDirection:'column',padding:'14px 0',flexShrink:0}}>
-        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v27 · LeBonCoin + IA</span></div>
+        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v28 · LeBonCoin + IA</span></div>
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'4px 14px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Biens</div>
         {navItems.filter(n=>n.section==='biens').map(item=>(<div key={item.id} onClick={()=>handleNav(item.id)} style={{padding:'7px 14px',fontSize:12,color:navSection===item.id?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection===item.id?'var(--color-background-primary)':'transparent',borderRight:navSection===item.id?'2px solid #378ADD':'none',cursor:'pointer',fontWeight:navSection===item.id?500:400}}>{item.label}</div>))}
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'10px 14px 4px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Contacts</div>
         <div onClick={()=>handleNav('annuaire')} style={{padding:'7px 14px',fontSize:12,color:navSection==='annuaire'?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection==='annuaire'?'var(--color-background-primary)':'transparent',borderRight:navSection==='annuaire'?'2px solid #378ADD':'none',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}>Annuaire<span style={{fontSize:10,background:'#E6F1FB',color:'#0C447C',borderRadius:10,padding:'1px 6px'}}>{Object.keys(contacts).length}</span></div>
+        <div onClick={()=>handleNav('interactions')} style={{padding:'7px 14px',fontSize:12,color:navSection==='interactions'?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection==='interactions'?'var(--color-background-primary)':'transparent',borderRight:navSection==='interactions'?'2px solid #378ADD':'none',cursor:'pointer'}}>CRM — Interactions</div>
         <div style={{marginTop:'auto',padding:'10px 14px',borderTop:'0.5px solid var(--color-border-tertiary)',fontSize:11,color:'var(--color-text-tertiary)'}}>{Object.keys(biens).length} biens · {Object.keys(contacts).length} contacts</div>
       </div>
       <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
