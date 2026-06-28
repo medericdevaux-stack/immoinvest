@@ -777,13 +777,21 @@ function AgentsView({ biens, onOpenBien }) {
   // ── Groupement biens → agents ──────────────────────────────────────────
   const agents = React.useMemo(() => {
     const groups = {};
+    // Premier passage : biens actifs (non écartés) pour la file/annuaire
     Object.values(biens).forEach(b => {
       if (b.statut === 'Écarté') return;
       const key = (b.ownerName || '').trim() || '__anon__';
-      if (!groups[key]) groups[key] = { key, name: b.ownerName || '', type: b.ownerType || '', phone: b.ownerPhone || '', biens: [] };
+      if (!groups[key]) groups[key] = { key, name: b.ownerName || '', type: b.ownerType || '', phone: b.ownerPhone || '', biens: [], nbEtude: 0, nbEcartes: 0 };
       groups[key].biens.push(b);
       if (!groups[key].phone && b.ownerPhone) groups[key].phone = b.ownerPhone;
       if (!groups[key].type  && b.ownerType)  groups[key].type  = b.ownerType;
+      if (b.statut === 'En étude' || b.statut === 'À qualifier' || b.statut === 'À étudier') groups[key].nbEtude++;
+    });
+    // Second passage : comptage des écartés par agent (sans les ajouter à la file)
+    Object.values(biens).forEach(b => {
+      if (b.statut !== 'Écarté') return;
+      const key = (b.ownerName || '').trim() || '__anon__';
+      if (groups[key]) groups[key].nbEcartes++;
     });
     return Object.values(groups).map(ag => {
       const rnds     = ag.biens.map(b => parseFloat(b.rendement)).filter(v => v > 0);
@@ -864,7 +872,9 @@ function AgentsView({ biens, onOpenBien }) {
         <div>
           <span style={{ fontSize:15, fontWeight:500 }}>Agents & Vendeurs</span>
           <span style={{ fontSize:12, color:'var(--color-text-secondary)', marginLeft:10 }}>
-            {agents.length} contacts · {agents.filter(a=>a.rel==='jamais').length} jamais contactés · {agents.filter(a=>a.rel==='relancer').length} à relancer
+            {agents.length} contacts · <span style={{color:'#791F1F'}}>{agents.filter(a=>a.rel==='jamais').length} jamais contactés</span> · <span style={{color:'#633806'}}>{agents.filter(a=>a.rel==='relancer').length} à relancer</span>
+            {' · '}<span style={{color:'#3C3489'}}>{agents.reduce((s,a)=>s+a.nbEtude,0)} en étude</span>
+            {' · '}<span style={{color:'var(--color-text-tertiary)'}}>{agents.reduce((s,a)=>s+a.nbEcartes,0)} écartés</span>
             {loading && ' · ⏳'}
           </span>
         </div>
@@ -912,6 +922,11 @@ function AgentsView({ biens, onOpenBien }) {
                   </div>
                   <div style={{ fontSize:11, color:'var(--color-text-secondary)', marginTop:2 }}>
                     {relLabel(ag.rel, ag.daysSince)} · {ag.nbBiens} bien{ag.nbBiens>1?'s':''}
+                    {(ag.nbEtude > 0 || ag.nbEcartes > 0) && (
+                      <span style={{ marginLeft:6, color:'var(--color-text-tertiary)' }}>
+                        ({[ag.nbEtude > 0 && `${ag.nbEtude} en étude`, ag.nbEcartes > 0 && `${ag.nbEcartes} écarté${ag.nbEcartes>1?'s':''}`].filter(Boolean).join(' · ')})
+                      </span>
+                    )}
                   </div>
                   {mode === 'file' && bTop && (
                     <div style={{ fontSize:11, color:'var(--color-text-tertiary)', marginTop:3, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontStyle:'italic' }}>
@@ -1059,7 +1074,7 @@ function App() {
   return (
     <div style={{display:'flex',height:'100vh',fontFamily:'var(--font-sans)'}}>
       <div style={{width:164,background:'var(--color-background-secondary)',borderRight:'0.5px solid var(--color-border-tertiary)',display:'flex',flexDirection:'column',padding:'14px 0',flexShrink:0}}>
-        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v32 · LBC + IA + Agents</span></div>
+        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v33 · LBC + IA + Agents</span></div>
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'4px 14px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Biens</div>
         {navItems.filter(n=>n.section==='biens').map(item=>(<div key={item.id} onClick={()=>handleNav(item.id)} style={{padding:'7px 14px',fontSize:12,color:navSection===item.id?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection===item.id?'var(--color-background-primary)':'transparent',borderRight:navSection===item.id?'2px solid #378ADD':'none',cursor:'pointer',fontWeight:navSection===item.id?500:400}}>{item.label}</div>))}
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'10px 14px 4px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Relation</div>
