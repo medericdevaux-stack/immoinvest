@@ -78,14 +78,13 @@ const TYPES_BIEN = [
   { id: "9", label: "Tous" }, { id: "9_5", label: "Immeuble" },
   { id: "9_7", label: "Local commercial" }, { id: "9_1", label: "Appartement" }, { id: "9_2", label: "Maison" },
 ];
-const STATUTS = ["Nouveau", "À qualifier", "En étude", "Contacté", "Visité", "Suivi", "Écarté"];
+const STATUTS = ["Nouveau", "En étude", "Contacté", "Visité", "Suivi", "Écarté"];
 const STATUT_COLORS = {
   "Nouveau":   { bg: "#E6F1FB", text: "#0C447C", border: "#B5D4F4" },
   "En étude":  { bg: "#EEEDFE", text: "#3C3489", border: "#AFA9EC" },
   "Contacté":  { bg: "#FAEEDA", text: "#633806", border: "#FAC775" },
   "Visité":    { bg: "#EAF3DE", text: "#27500A", border: "#C0DD97" },
   "Suivi":     { bg: "#E1F5EE", text: "#085041", border: "#5DCAA5" },
-  "À qualifier":{ bg: "#FFF7E6", text: "#7C4A00", border: "#FBD38D" },
   "Écarté":    { bg: "#FCEBEB", text: "#791F1F", border: "#F7C1C1" },
 };
 const TYPES_CONTACT = ["Agent immobilier","Notaire","Chasseur immobilier","Particulier","Marchand de biens","Syndic","Gestionnaire","Promoteur","Autre"];
@@ -272,58 +271,6 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
   const [jsonInput, setJsonInput] = useState('');
   const [showPaste, setShowPaste] = useState(false);
   const [showEcartes, setShowEcartes] = useState(true);
-  const [batchIaRunning, setBatchIaRunning] = useState(false);
-  const [batchIaProgress, setBatchIaProgress] = useState({ done: 0, total: 0 });
-
-  const analyserNouveaux = useCallback(async () => {
-    const aAnalyser = listings.filter(l => !l.ia_analysed && l.desc && (l.statut === 'Nouveau' || l.statut === 'À qualifier'));
-    if (aAnalyser.length === 0) { setNotif('⚠️ Aucun bien à analyser (tous déjà analysés ou sans description)'); return; }
-    setBatchIaRunning(true);
-    setBatchIaProgress({ done: 0, total: aAnalyser.length });
-    let done = 0;
-    for (const bien of aAnalyser) {
-      try {
-        const res = await fetch(`${APPS_SCRIPT_URL}?action=analyzeAnnonce&id=${encodeURIComponent(bien.id)}`);
-        const data = await res.json();
-        if (data.success && data.result) {
-          const r = data.result;
-          const patch = {};
-          if (r.loyer_actuel)        patch.loyers = r.loyer_actuel;
-          if (r.loyer_potentiel)     patch.loyer_potentiel = r.loyer_potentiel;
-          if (r.dpe)                 patch.dpe = r.dpe;
-          if (r.ges)                 patch.ges = r.ges;
-          if (r.nb_lots)             patch.nb_lots = r.nb_lots;
-          if (r.annee_construction)  patch.annee_construction = r.annee_construction;
-          if (r.travaux_type)        patch.travaux_type = r.travaux_type;
-          if (r.travaux_resume)      patch.travaux_resume = r.travaux_resume;
-          if (r.type_bien_ia)        patch.type_bien_ia = r.type_bien_ia;
-          if (r.score_ia)            patch.score_ia = r.score_ia;
-          if (r.raison_ia)           patch.raison_ia = r.raison_ia;
-          if (r.loyer_source)        patch.loyer_source = r.loyer_source;
-          patch.ia_analysed = new Date().toISOString().slice(0,10);
-          // Recalculer rendement local avec loyer IA
-          const bestLoyer = r.loyer_actuel || r.loyer_potentiel;
-          if (bestLoyer && bien.price) {
-            const fn = bien.fraisNotaire ?? FRAIS_NOTAIRE_DEFAULT;
-            const fa = bien.fraisAgence ?? FRAIS_AGENCE_DEFAULT;
-            patch.rendement = parseFloat(((bestLoyer / (bien.price*(1+fn) + bien.price*fa))*100).toFixed(1));
-          }
-          // Mettre à jour statut local
-          if (r.score_ia === 'À étudier') patch.statut = 'En étude';
-          else if (r.score_ia === 'À écarter') patch.statut = 'Écarté';
-          else if (r.score_ia === 'À qualifier') patch.statut = 'À qualifier';
-          updateBien({ ...bien, ...patch });
-          setListings(prev => prev.map(l => l.id === bien.id ? { ...l, ...patch } : l));
-        }
-      } catch(e) { console.warn('Batch IA erreur bien', bien.id, e); }
-      done++;
-      setBatchIaProgress({ done, total: aAnalyser.length });
-    }
-    setBatchIaRunning(false);
-    // Recharger depuis Sheet pour avoir statuts + rendements à jour
-    await chargerDepuisSheet(true);
-    setNotif(`✅ ${done} bien(s) analysés — liste rechargée`);
-  }, [listings, updateBien, chargerDepuisSheet]);
 
   const analyseTravaux = useCallback(async (ads) => {
     setAnalysingTravaux(true);
@@ -346,42 +293,52 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
     else { setError(''); analyseTravaux(parsed); }
   }, [filters, biens, updateBien, analyseTravaux]);
 
-  const normaliserBien = (b) => {
-    const price = Number(b.price) || 0;
-    const loyers = Number(b.loyers) || 0;
-    const fn = b.fraisNotaire != null ? Number(b.fraisNotaire) : FRAIS_NOTAIRE_DEFAULT;
-    const fa = b.fraisAgence  != null ? Number(b.fraisAgence)  : FRAIS_AGENCE_DEFAULT;
-    const rendement = loyers && price
-      ? parseFloat(((loyers / (price*(1+fn) + price*fa))*100).toFixed(1))
-      : (b.rendement ? parseFloat(b.rendement) : null);
-    return {
-      ...b, id: String(b.id), fraisNotaire: fn, fraisAgence: fa,
-      statut: b.statut ?? 'Nouveau',
-      interactions: b.interactions ? (typeof b.interactions === 'string' ? JSON.parse(b.interactions) : b.interactions) : [],
-      notes: b.notes ?? '', price, surface: Number(b.surface) || 0, loyers, rendement,
-      ppm2: Number(b.surface) > 0 ? Math.round(price / Number(b.surface)) : null,
-    };
-  };
-
-  const chargerDepuisSheet = useCallback(async (silent = false) => {
-    if (!silent) { setLoadingSheet(true); setNotif(''); setError(''); }
+  const chargerDepuisSheet = useCallback(async () => {
+    setLoadingSheet(true); setNotif(''); setError('');
     try {
       const res = await fetch(`${APPS_SCRIPT_URL}?action=getBiens&v=${Date.now()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.success && data.biens?.length) {
-        const biensMap = {};
-        data.biens.forEach(b => { const n = normaliserBien(b); biensMap[n.id] = n; });
-        setBiens(prev => ({ ...prev, ...biensMap }));
-        const biensToShow = Object.values(biensMap).sort((a,b) => (b.rendement||0)-(a.rendement||0));
+        setBiens(prev => {
+          const existingIds = new Set(Object.keys(prev));
+          const nouveaux = {};
+          data.biens.forEach(b => {
+            const bid = String(b.id);
+            if (bid && !existingIds.has(bid)) {
+              nouveaux[bid] = { ...b, id: bid,
+                fraisNotaire: b.fraisNotaire ?? FRAIS_NOTAIRE_DEFAULT,
+                fraisAgence: b.fraisAgence ?? FRAIS_AGENCE_DEFAULT,
+                statut: b.statut ?? 'Nouveau',
+                interactions: b.interactions ? (typeof b.interactions === 'string' ? JSON.parse(b.interactions) : b.interactions) : [],
+                notes: b.notes ?? '',
+              };
+            }
+          });
+          return { ...prev, ...nouveaux };
+        });
+        // Afficher directement les biens dans la liste
+        const biensToShow = data.biens.map(b => ({
+          ...b,
+          id: String(b.id),
+          fraisNotaire: b.fraisNotaire ?? FRAIS_NOTAIRE_DEFAULT,
+          fraisAgence: b.fraisAgence ?? FRAIS_AGENCE_DEFAULT,
+          statut: b.statut ?? 'Nouveau',
+          interactions: b.interactions ? (typeof b.interactions === 'string' ? JSON.parse(b.interactions) : b.interactions) : [],
+          notes: b.notes ?? '',
+          rendement: b.rendement ? parseFloat(b.rendement) : null,
+          price: Number(b.price) || 0,
+          surface: Number(b.surface) || 0,
+          loyers: Number(b.loyers) || 0,
+        })).sort((a,b) => (b.rendement||0)-(a.rendement||0));
         setListings(biensToShow);
+        setNotif(`✅ ${data.biens.length} biens chargés depuis le Sheet`);
         setLastRun(new Date());
-        if (!silent) setNotif(`✅ ${data.biens.length} biens chargés depuis le Sheet`);
       } else if (data.biens?.length === 0) {
-        if (!silent) setNotif("⚠️ Sheet vide — lance d'abord le bookmarklet");
-      } else { if (!silent) setNotif('⚠️ Réponse inattendue'); }
-    } catch(e) { if (!silent) setError(`❌ Erreur : ${e.message}`); }
-    if (!silent) setLoadingSheet(false);
+        setNotif('⚠️ Sheet vide — lance d\'abord le bookmarklet');
+      } else { setNotif('⚠️ Réponse inattendue'); }
+    } catch(e) { setError(`❌ Erreur : ${e.message}`); }
+    setLoadingSheet(false);
   }, [setBiens]);
 
   const runPaste = () => { try { processData(JSON.parse(jsonInput)); setShowPaste(false); setJsonInput(''); } catch { setError('JSON invalide.'); } };
@@ -399,7 +356,7 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
   const SortIcon = ({col}) => sortCol===col ? (sortDir==='asc'?'↑':'↓') : <span style={{opacity:0.3}}>↕</span>;
 
   const displayed = listings
-    .map(l=>({...biens[l.id],...l}))
+    .map(l=>({...l,...biens[l.id]}))
     .filter(l => {
       if (filters.contactId && l.contactId !== filters.contactId) return false;
       if (filters.prixMin && l.price < Number(filters.prixMin)) return false;
@@ -442,13 +399,13 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
           <button onClick={chargerDepuisSheet} disabled={loadingSheet} style={{fontSize:12,padding:'5px 12px',borderRadius:6,border:'0.5px solid #C0DD97',background:'#EAF3DE',color:'#27500A',cursor:loadingSheet?'not-allowed':'pointer',opacity:loadingSheet?0.7:1}}>
             {loadingSheet?'⏳ Chargement…':'☁️ Charger depuis Sheet'}
           </button>
-          {(()=>{const n=listings.filter(l=>!l.ia_analysed&&l.desc&&(l.statut==='Nouveau'||l.statut==='À qualifier')).length;return <button onClick={analyserNouveaux} disabled={batchIaRunning||n===0} style={{fontSize:12,padding:'5px 12px',borderRadius:6,border:'0.5px solid #C0DD97',background:'#EAF3DE',color:n===0?'#9ca3af':'#27500A',cursor:(batchIaRunning||n===0)?'not-allowed':'pointer',opacity:(batchIaRunning||n===0)?0.6:1}}>{batchIaRunning?`⏳ Analyse IA ${batchIaProgress.done}/${batchIaProgress.total}…`:`🤖 Analyser les nouveaux (${n})`}</button>;})()}
+          <button onClick={()=>setShowPaste(p=>!p)} style={{fontSize:12,padding:'5px 12px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',background:'transparent',color:'var(--color-text-secondary)',cursor:'pointer'}}>📋 Coller JSON</button>
           {listings.length>0&&<button onClick={exportCsv} style={{fontSize:12,padding:'5px 12px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',background:'transparent',color:'var(--color-text-secondary)',cursor:'pointer'}}>Export CSV</button>}
           {analysingTravaux&&<span style={{fontSize:11,color:'#633806',background:'#FAEEDA',borderRadius:5,padding:'3px 8px'}}>Analyse travaux…</span>}
           {lastRun&&<span style={{fontSize:11,color:'var(--color-text-tertiary)'}}>Maj : {lastRun.toLocaleTimeString('fr-FR')}</span>}
         </div>
         {notif&&<div style={{marginTop:8,fontSize:12,color:notif.startsWith('✅')?'#27500A':'#633806',background:notif.startsWith('✅')?'#EAF3DE':'#FAEEDA',borderRadius:6,padding:'6px 10px'}}>{notif}</div>}
-        
+        {showPaste&&(<div style={{marginTop:10}}><textarea value={jsonInput} onChange={e=>setJsonInput(e.target.value)} rows={3} placeholder='{"ads": [...]}' style={{width:'100%',fontSize:11,fontFamily:'var(--font-mono)',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',padding:6,background:'var(--color-background-primary)',color:'var(--color-text-primary)',resize:'vertical'}}/><button onClick={runPaste} style={{marginTop:4,fontSize:12,padding:'4px 10px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',cursor:'pointer',background:'var(--color-background-primary)',color:'var(--color-text-primary)'}}>Analyser</button></div>)}
       </div>
       {error&&<div style={{fontSize:12,color:'#791F1F',background:'#FCEBEB',border:'0.5px solid #F7C1C1',borderRadius:8,padding:'7px 10px',marginBottom:10}}>{error}</div>}
       {displayed.length>0&&(<>
@@ -575,7 +532,7 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
         <div style={{display:'flex',gap:6,alignItems:'center'}}>
           <select value={bien.statut} onChange={e=>update({statut:e.target.value})} style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',background:'var(--color-background-primary)',color:'var(--color-text-primary)'}}>{STATUTS.map(s=><option key={s}>{s}</option>)}</select>
           {!bien.expired&&<button onClick={()=>update({expired:true})} style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'0.5px solid #F7C1C1',background:'#FCEBEB',color:'#791F1F',cursor:'pointer'}}>Marquer expirée</button>}
-          <button onClick={analyzeWithIA} disabled={iaLoading||!bien.desc} style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'0.5px solid #C0DD97',background:bien.desc?'#EAF3DE':'var(--color-background-secondary)',color:bien.desc?'#27500A':'var(--color-text-tertiary)',cursor:bien.desc?'pointer':'not-allowed'}}>{iaLoading?'⏳ Analyse…':'🤖 Analyser'}</button>
+          <button onClick={analyzeWithIA} disabled={iaLoading||!bien.desc} style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'0.5px solid #C0DD97',background:bien.desc?'#EAF3DE':'var(--color-background-secondary)',color:bien.desc?'#27500A':'var(--color-text-tertiary)',cursor:bien.desc?'pointer':'not-allowed'}}>{iaLoading?'⏳ Analyse…':'🔄 Ré-analyser'}</button>
           <a href={bien.url} target="_blank" rel="noreferrer" style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',color:'var(--color-text-secondary)',textDecoration:'none'}}>Voir ↗</a>
         </div>
       </div>
@@ -589,7 +546,7 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
       {activeTab==='detail'&&(<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
         <div style={{border:'0.5px solid var(--color-border-tertiary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px'}}>
           <div style={{fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',marginBottom:8,textTransform:'uppercase'}}>Bien</div>
-          <F label="Prix" val={bien.price.toLocaleString('fr-FR')+' €'}/><F label="Surface" val={bien.surface+' m²'}/><F label="CP" val={bien.cp+' '+bien.ville}/>
+          <F label="Prix" val={bien.price.toLocaleString('fr-FR')+' €'}/><F label="Surface" val={bien.surface+' m²'}/><F label="CP" val={bien.cp+' '+bien.ville}/>{bien.date&&<F label="Publié le" val={bien.date}/>}
           <div style={{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:12,borderBottom:'0.5px solid var(--color-border-tertiary)'}}><span style={{color:'var(--color-text-secondary)'}}>Annonce</span><span onClick={()=>window.open(bien.url,'_blank')} style={{fontSize:12,color:'#378ADD',cursor:'pointer'}}>Voir ↗</span></div>
 
           {/* ── Infos vendeur ── */}
@@ -751,6 +708,247 @@ function ContactDetail({ contact: init, onUpdate, biens, onOpenBien, onDelete })
   </div>);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── PHASE B : VUE AGENTS ───────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+function AgentsView({ biens, onOpenBien }) {
+  const [interactions, setInteractions] = useState([]);
+  const [loading, setLoading]           = useState(false);
+  const [mode, setMode]                 = useState('file');    // 'file' | 'annuaire'
+  const [sortBy, setSortBy]             = useState('rendement');
+  const [feedback, setFeedback]         = useState({});        // key → {open,stock,rappel,segment,note,saving}
+  const [expanded, setExpanded]         = useState(null);
+  const [notif, setNotif]               = useState('');
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`${APPS_SCRIPT_URL}?action=getInteractions&v=${Date.now()}`);
+        const d   = await res.json();
+        if (d.success) setInteractions(d.interactions || []);
+      } catch(e) { console.warn('getInteractions:', e); }
+      setLoading(false);
+    })();
+  }, []);
+
+  // ── Groupement biens → agents ──────────────────────────────────────────
+  const agents = React.useMemo(() => {
+    const groups = {};
+    Object.values(biens).forEach(b => {
+      if (b.statut === 'Écarté') return;
+      const key = (b.ownerName || '').trim() || '__anon__';
+      if (!groups[key]) groups[key] = { key, name: b.ownerName || '', type: b.ownerType || '', phone: b.ownerPhone || '', biens: [] };
+      groups[key].biens.push(b);
+      if (!groups[key].phone && b.ownerPhone) groups[key].phone = b.ownerPhone;
+      if (!groups[key].type  && b.ownerType)  groups[key].type  = b.ownerType;
+    });
+    return Object.values(groups).map(ag => {
+      const rnds     = ag.biens.map(b => parseFloat(b.rendement)).filter(v => v > 0);
+      const maxRend  = rnds.length ? Math.max(...rnds) : 0;
+      const lastSeen = ag.biens.map(b => b.lastSeen || '').sort().pop() || '';
+      // Appels pour cet agent : type='Appel agent' + bienTitle = ownerName
+      const calls       = interactions.filter(i => i.type === 'Appel agent' && i.bienTitle === ag.name);
+      const lastCallDate = calls.length ? calls.map(c => c.date || '').sort().pop() : null;
+      const daysSince   = lastCallDate ? Math.floor((Date.now() - new Date(lastCallDate)) / 86400000) : null;
+      const rel = daysSince === null ? 'jamais' : daysSince <= 30 ? 'actif' : 'relancer';
+      return { ...ag, maxRend, nbBiens: ag.biens.length, lastSeen, lastCallDate, daysSince, rel };
+    });
+  }, [biens, interactions]);
+
+  // ── Tri ───────────────────────────────────────────────────────────────
+  const relOrder = { jamais: 0, relancer: 1, actif: 2 };
+  const sorted = [...agents].sort((a, b) => {
+    if (mode === 'file') {
+      // File : 🔴 → 🟡 → 🟢, puis Rdt > Nb > Fraîcheur
+      if (relOrder[a.rel] !== relOrder[b.rel]) return relOrder[a.rel] - relOrder[b.rel];
+    }
+    if (sortBy === 'rendement' || mode === 'file') {
+      if (b.maxRend !== a.maxRend) return b.maxRend - a.maxRend;
+      if (b.nbBiens !== a.nbBiens) return b.nbBiens - a.nbBiens;
+      return b.lastSeen.localeCompare(a.lastSeen);
+    }
+    if (sortBy === 'nb')       return b.nbBiens - a.nbBiens;
+    if (sortBy === 'fraicheur') return b.lastSeen.localeCompare(a.lastSeen);
+    return 0;
+  });
+
+  // ── Helpers ───────────────────────────────────────────────────────────
+  const relIcon  = s => s === 'jamais' ? '🔴' : s === 'relancer' ? '🟡' : '🟢';
+  const relLabel = (s, d) => s === 'jamais' ? 'Jamais contacté' : s === 'relancer' ? `À relancer · ${d}j sans appel` : `Actif · dernier appel il y a ${d}j`;
+
+  const topBien = ag => [...ag.biens].sort((a, b) => (parseFloat(b.rendement)||0) - (parseFloat(a.rendement)||0))[0];
+  const scriptLabel = ag => {
+    const b = topBien(ag);
+    if (!b) return '';
+    return `"Bonjour, j'ai vu votre annonce « ${b.title.slice(0,50)}… » — avez-vous d'autres immeubles de rapport ?"`;
+  };
+
+  // ── Feedback ──────────────────────────────────────────────────────────
+  const openFb  = key => setFeedback(f => ({...f, [key]: { open:true, stock:null, rappel:null, segment:null, note:'', saving:false }}));
+  const closeFb = key => setFeedback(f => { const n={...f}; delete n[key]; return n; });
+  const toggleFb = (key, field, val) => setFeedback(f => ({...f, [key]: {...f[key], [field]: f[key][field]===val ? null : val }}));
+
+  const saveFeedback = async ag => {
+    const fb = feedback[ag.key]; if (!fb) return;
+    setFeedback(f => ({...f, [ag.key]: {...fb, saving:true}}));
+    const b   = topBien(ag);
+    const int = { id: String(Date.now()), type:'Appel agent', date:new Date().toISOString().slice(0,10), auteur:'Médéric', bienTitle:ag.name||'Particulier', bienId:b?.id||'', note:JSON.stringify({stock:fb.stock,rappel:fb.rappel,segment:fb.segment, ...(fb.note?{note:fb.note}:{})}) };
+    try {
+      await pushInteractionToSheet(int, int.bienId, int.bienTitle);
+      setInteractions(prev => [...prev, int]);
+      closeFb(ag.key);
+      setNotif(`✅ Appel « ${ag.name||'particulier'} » enregistré`);
+      setTimeout(() => setNotif(''), 3000);
+    } catch(e) { setFeedback(f => ({...f, [ag.key]: {...fb, saving:false}})); }
+  };
+
+  const FbBtn = ({ label, field, val, agKey }) => {
+    const fb  = feedback[agKey] || {};
+    const sel = fb[field] === val;
+    return (
+      <button onClick={() => toggleFb(agKey, field, val)} style={{ fontSize:11, padding:'5px 10px', borderRadius:6, cursor:'pointer', fontWeight:sel?500:400, border:sel?'1.5px solid #0C447C':'0.5px solid var(--color-border-secondary)', background:sel?'#E6F1FB':'var(--color-background-primary)', color:sel?'#0C447C':'var(--color-text-secondary)' }}>
+        {label}
+      </button>
+    );
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────
+  return (
+    <div style={{ padding:'14px 16px' }}>
+
+      {/* Header */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+        <div>
+          <span style={{ fontSize:15, fontWeight:500 }}>Agents & Vendeurs</span>
+          <span style={{ fontSize:12, color:'var(--color-text-secondary)', marginLeft:10 }}>
+            {agents.length} contacts · {agents.filter(a=>a.rel==='jamais').length} jamais contactés · {agents.filter(a=>a.rel==='relancer').length} à relancer
+            {loading && ' · ⏳'}
+          </span>
+        </div>
+        <div style={{ display:'flex', gap:6 }}>
+          {[['file','📞 File d\'appels'],['annuaire','📋 Annuaire']].map(([m,l]) => (
+            <button key={m} onClick={()=>setMode(m)} style={{ fontSize:12, padding:'5px 12px', borderRadius:6, cursor:'pointer', border:mode===m?'1.5px solid #0C447C':'0.5px solid var(--color-border-secondary)', background:mode===m?'#E6F1FB':'transparent', color:mode===m?'#0C447C':'var(--color-text-secondary)' }}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {notif && <div style={{ marginBottom:10, fontSize:12, color:'#27500A', background:'#EAF3DE', borderRadius:6, padding:'6px 10px' }}>{notif}</div>}
+
+      {/* Tri (annuaire seulement) */}
+      {mode === 'annuaire' && (
+        <div style={{ display:'flex', gap:6, marginBottom:12, alignItems:'center' }}>
+          <span style={{ fontSize:11, color:'var(--color-text-tertiary)' }}>Trier par</span>
+          {[['rendement','Rendement'],['nb','Nb biens'],['fraicheur','Fraîcheur']].map(([k,l]) => (
+            <button key={k} onClick={()=>setSortBy(k)} style={{ fontSize:11, padding:'3px 8px', borderRadius:5, cursor:'pointer', border:sortBy===k?'1.5px solid #0C447C':'0.5px solid var(--color-border-secondary)', background:sortBy===k?'#E6F1FB':'transparent', color:sortBy===k?'#0C447C':'var(--color-text-secondary)' }}>{l}</button>
+          ))}
+        </div>
+      )}
+
+      {sorted.length === 0 && (
+        <div style={{ textAlign:'center', padding:'3rem 0', color:'var(--color-text-tertiary)', fontSize:13 }}>
+          Charge les biens depuis la Sheet pour voir les agents.
+        </div>
+      )}
+
+      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+        {sorted.map(ag => {
+          const fb         = feedback[ag.key];
+          const isExpanded = expanded === ag.key;
+          const bTop       = topBien(ag);
+          return (
+            <div key={ag.key} style={{ border:'0.5px solid var(--color-border-tertiary)', borderRadius:'var(--border-radius-md)', padding:'10px 12px', background:'var(--color-background-primary)' }}>
+
+              {/* Ligne principale */}
+              <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <span style={{ fontSize:16, flexShrink:0 }}>{relIcon(ag.rel)}</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                    <span style={{ fontSize:13, fontWeight:500 }}>{ag.name || 'Particulier (sans nom)'}</span>
+                    {ag.type && <span style={{ fontSize:10, color:'var(--color-text-secondary)', background:'var(--color-background-secondary)', borderRadius:4, padding:'1px 6px' }}>{ag.type}</span>}
+                    {ag.maxRend > 0 && <span style={{ fontSize:11, fontWeight:500, color:ag.maxRend>=8?'#27500A':'#633806' }}>↑ {ag.maxRend.toFixed(1)}%</span>}
+                  </div>
+                  <div style={{ fontSize:11, color:'var(--color-text-secondary)', marginTop:2 }}>
+                    {relLabel(ag.rel, ag.daysSince)} · {ag.nbBiens} bien{ag.nbBiens>1?'s':''}
+                  </div>
+                  {mode === 'file' && bTop && (
+                    <div style={{ fontSize:11, color:'var(--color-text-tertiary)', marginTop:3, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontStyle:'italic' }}>
+                      {scriptLabel(ag)}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display:'flex', gap:5, flexShrink:0, alignItems:'center' }}>
+                  {ag.phone
+                    ? <a href={`tel:${ag.phone}`} style={{ fontSize:11, padding:'4px 8px', borderRadius:6, border:'0.5px solid #C0DD97', background:'#EAF3DE', color:'#27500A', textDecoration:'none' }}>📞 {ag.phone}</a>
+                    : <span style={{ fontSize:11, color:'var(--color-text-tertiary)' }}>📞 —</span>
+                  }
+                  {!fb && (
+                    <button onClick={()=>openFb(ag.key)} style={{ fontSize:11, padding:'4px 10px', borderRadius:6, border:'0.5px solid #B5D4F4', background:'#E6F1FB', color:'#0C447C', cursor:'pointer' }}>
+                      Appel ↓
+                    </button>
+                  )}
+                  <button onClick={()=>setExpanded(isExpanded?null:ag.key)} style={{ fontSize:11, padding:'4px 8px', borderRadius:6, border:'0.5px solid var(--color-border-secondary)', background:'transparent', color:'var(--color-text-secondary)', cursor:'pointer', whiteSpace:'nowrap' }}>
+                    {isExpanded ? '▲' : `${ag.nbBiens} bien${ag.nbBiens>1?'s':''} ▼`}
+                  </button>
+                </div>
+              </div>
+
+              {/* Feedback 3 clics */}
+              {fb && (
+                <div style={{ marginTop:10, padding:'10px 12px', background:'var(--color-background-secondary)', borderRadius:8, border:'0.5px solid #B5D4F4' }}>
+                  <div style={{ fontSize:11, fontWeight:500, color:'var(--color-text-secondary)', marginBottom:8 }}>Résultat de l'appel — {new Date().toLocaleDateString('fr-FR')}</div>
+                  <div style={{ display:'flex', gap:14, flexWrap:'wrap', marginBottom:8 }}>
+                    <div style={{ display:'flex', gap:4, alignItems:'center' }}>
+                      <span style={{ fontSize:11, color:'var(--color-text-secondary)' }}>Stock ?</span>
+                      <FbBtn label="✅ Oui"  field="stock"   val={true}  agKey={ag.key}/>
+                      <FbBtn label="❌ Non"  field="stock"   val={false} agKey={ag.key}/>
+                    </div>
+                    <div style={{ display:'flex', gap:4, alignItems:'center' }}>
+                      <span style={{ fontSize:11, color:'var(--color-text-secondary)' }}>Rappel ?</span>
+                      <FbBtn label="✅ Oui"  field="rappel"  val={true}  agKey={ag.key}/>
+                      <FbBtn label="❌ Non"  field="rappel"  val={false} agKey={ag.key}/>
+                    </div>
+                    <div style={{ display:'flex', gap:4, alignItems:'center' }}>
+                      <span style={{ fontSize:11, color:'var(--color-text-secondary)' }}>Segment ?</span>
+                      <FbBtn label="✅ Confirmé" field="segment" val={true}  agKey={ag.key}/>
+                      <FbBtn label="❌ Non"      field="segment" val={false} agKey={ag.key}/>
+                    </div>
+                  </div>
+                  <div style={{ display:'flex', gap:6 }}>
+                    <input value={fb.note} onChange={e=>setFeedback(f=>({...f,[ag.key]:{...fb,note:e.target.value}}))} placeholder="Note courte optionnelle…" style={{ flex:1, fontSize:11, padding:'4px 8px', borderRadius:5, border:'0.5px solid var(--color-border-secondary)', background:'var(--color-background-primary)', color:'var(--color-text-primary)' }}/>
+                    <button onClick={()=>saveFeedback(ag)} disabled={fb.saving} style={{ fontSize:11, padding:'4px 12px', borderRadius:6, border:'0.5px solid #C0DD97', background:'#EAF3DE', color:'#27500A', cursor:fb.saving?'not-allowed':'pointer' }}>
+                      {fb.saving ? '⏳…' : '✅ Enregistrer'}
+                    </button>
+                    <button onClick={()=>closeFb(ag.key)} style={{ fontSize:11, padding:'4px 8px', borderRadius:6, border:'0.5px solid var(--color-border-secondary)', background:'transparent', color:'var(--color-text-secondary)', cursor:'pointer' }}>Annuler</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Liste des biens (dépliée) */}
+              {isExpanded && (
+                <div style={{ marginTop:10, borderTop:'0.5px solid var(--color-border-tertiary)', paddingTop:8 }}>
+                  {[...ag.biens].sort((a,b)=>(parseFloat(b.rendement)||0)-(parseFloat(a.rendement)||0)).map(b => (
+                    <div key={b.id} onClick={()=>onOpenBien(b)} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:'0.5px solid var(--color-border-tertiary)', cursor:'pointer', fontSize:12 }}
+                      onMouseEnter={e=>e.currentTarget.style.background='var(--color-background-secondary)'}
+                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      <span style={{ fontWeight:500, color:(parseFloat(b.rendement)||0)>=8?'#27500A':'#633806', width:38, flexShrink:0 }}>
+                        {b.rendement ? parseFloat(b.rendement).toFixed(1)+'%' : '—'}
+                      </span>
+                      <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{b.title}</span>
+                      <span style={{ color:'var(--color-text-secondary)', fontSize:11, flexShrink:0 }}>{Number(b.price).toLocaleString('fr-FR')} €</span>
+                      <Badge statut={b.statut}/>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function BiensSuivisView({ biens, contacts, onOpenBien }) {
   const [filterStatut, setFilterStatut] = useState(''); const [sortBy, setSortBy] = useState('statutDate');
   const suivis=Object.values(biens).filter(b=>b.statut&&b.statut!=='Nouveau');
@@ -791,7 +989,7 @@ function App() {
   const openBien=(b)=>openTab('bien_'+b.id,'bien',b.title.slice(0,18)+'…',b);
   const openContact=(c)=>{setNavSection('annuaire');openTab('contact_'+c.id,'contact',c.nom.slice(0,16),c);};
   const closeTab=(id,e)=>{e.stopPropagation();const idx=tabs.findIndex(t=>t.id===id);setTabs(ts=>ts.filter(t=>t.id!==id));if(activeTab===id)setActiveTab(tabs[Math.max(0,idx-1)]?.id||'search');};
-  const handleNav=(id)=>{setNavSection(id);if(id==='search'){setActiveTab('search');return;}openTab(id,id,id==='annuaire'?'Annuaire':id==='interactions'?'Interactions':'Biens suivis',null);};
+  const handleNav=(id)=>{setNavSection(id);if(id==='search'){setActiveTab('search');return;}openTab(id,id,id==='annuaire'?'Annuaire':id==='interactions'?'Interactions':id==='agents'?'📞 Agents':'Biens suivis',null);};
 
   const currentTab=tabs.find(t=>t.id===activeTab);
   const renderContent=()=>{
@@ -799,6 +997,7 @@ function App() {
     if(currentTab.type==='search')return <SearchView onOpenBien={openBien} biens={biens} updateBien={updateBien} setBiens={setBiens} contacts={contacts}/>;
     if(currentTab.type==='suivis')return <BiensSuivisView biens={biens} contacts={contacts} onOpenBien={openBien}/>;
     if(currentTab.type==='annuaire')return <AnnuaireView contacts={contacts} setContacts={setContacts} biens={biens} onOpenContact={openContact}/>;
+    if(currentTab.type==='agents')return <AgentsView biens={biens} onOpenBien={openBien}/>;
     if(currentTab.type==='bien'){const b=biens[currentTab.data?.id]||currentTab.data;return b?<BienDetail bien={b} onUpdate={updateBien} contacts={contacts} setContacts={setContacts} onOpenContact={openContact}/>:null;}
     if(currentTab.type==='contact'){const c=contacts[currentTab.data?.id]||currentTab.data;return c?<ContactDetail contact={c} onUpdate={updateContact} biens={biens} onOpenBien={openBien} onDelete={deleteContact}/>:null;}
     return null;
@@ -809,16 +1008,18 @@ function App() {
   return (
     <div style={{display:'flex',height:'100vh',fontFamily:'var(--font-sans)'}}>
       <div style={{width:164,background:'var(--color-background-secondary)',borderRight:'0.5px solid var(--color-border-tertiary)',display:'flex',flexDirection:'column',padding:'14px 0',flexShrink:0}}>
-        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v29 · LeBonCoin + IA</span></div>
+        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v31 · LBC + IA + Agents</span></div>
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'4px 14px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Biens</div>
         {navItems.filter(n=>n.section==='biens').map(item=>(<div key={item.id} onClick={()=>handleNav(item.id)} style={{padding:'7px 14px',fontSize:12,color:navSection===item.id?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection===item.id?'var(--color-background-primary)':'transparent',borderRight:navSection===item.id?'2px solid #378ADD':'none',cursor:'pointer',fontWeight:navSection===item.id?500:400}}>{item.label}</div>))}
+        <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'10px 14px 4px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Relation</div>
+        <div onClick={()=>handleNav('agents')} style={{padding:'7px 14px',fontSize:12,color:navSection==='agents'?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection==='agents'?'var(--color-background-primary)':'transparent',borderRight:navSection==='agents'?'2px solid #378ADD':'none',cursor:'pointer',fontWeight:navSection==='agents'?500:400}}>📞 Agents</div>
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'10px 14px 4px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Contacts</div>
         <div onClick={()=>handleNav('annuaire')} style={{padding:'7px 14px',fontSize:12,color:navSection==='annuaire'?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection==='annuaire'?'var(--color-background-primary)':'transparent',borderRight:navSection==='annuaire'?'2px solid #378ADD':'none',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}>Annuaire<span style={{fontSize:10,background:'#E6F1FB',color:'#0C447C',borderRadius:10,padding:'1px 6px'}}>{Object.keys(contacts).length}</span></div>
         <div style={{marginTop:'auto',padding:'10px 14px',borderTop:'0.5px solid var(--color-border-tertiary)',fontSize:11,color:'var(--color-text-tertiary)'}}>{Object.keys(biens).length} biens · {Object.keys(contacts).length} contacts</div>
       </div>
       <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
         <div style={{display:'flex',borderBottom:'0.5px solid var(--color-border-tertiary)',background:'var(--color-background-secondary)',overflowX:'auto',flexShrink:0}}>
-          {tabs.map(t=>(<div key={t.id} onClick={()=>{setActiveTab(t.id);if(t.type==='search')setNavSection('search');if(['annuaire','suivis'].includes(t.type))setNavSection(t.type);}} style={{padding:'7px 12px',fontSize:12,color:activeTab===t.id?'var(--color-text-primary)':'var(--color-text-secondary)',background:activeTab===t.id?'var(--color-background-primary)':'transparent',borderRight:'0.5px solid var(--color-border-tertiary)',cursor:'pointer',whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:6,fontWeight:activeTab===t.id?500:400,flexShrink:0}}>{t.label}{t.id!=='search'&&<span onClick={e=>closeTab(t.id,e)} style={{fontSize:13,color:'var(--color-text-tertiary)',marginLeft:2}}>×</span>}</div>))}
+          {tabs.map(t=>(<div key={t.id} onClick={()=>{setActiveTab(t.id);if(t.type==='search')setNavSection('search');if(['annuaire','suivis'].includes(t.type))setNavSection(t.type);if(t.type==='agents')setNavSection('agents');}} style={{padding:'7px 12px',fontSize:12,color:activeTab===t.id?'var(--color-text-primary)':'var(--color-text-secondary)',background:activeTab===t.id?'var(--color-background-primary)':'transparent',borderRight:'0.5px solid var(--color-border-tertiary)',cursor:'pointer',whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:6,fontWeight:activeTab===t.id?500:400,flexShrink:0}}>{t.label}{t.id!=='search'&&<span onClick={e=>closeTab(t.id,e)} style={{fontSize:13,color:'var(--color-text-tertiary)',marginLeft:2}}>×</span>}</div>))}
         </div>
         <div style={{flex:1,overflowY:'auto',background:'var(--color-background-primary)'}}>{renderContent()}</div>
       </div>
