@@ -288,6 +288,7 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
   const [notif, setNotif] = useState('');
   const [lastRun, setLastRun] = useState(null);
   const [showEcartes, setShowEcartes] = useState(true);
+  const [showExpired, setShowExpired] = useState(true);
   const [openDropdownId, setOpenDropdownId] = useState(null);
 
   const analyseTravaux = useCallback(async (ads) => {
@@ -333,8 +334,10 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
               next[bid] = {
                 ...ex,
                 price, surface,
-                loyers: loyers || ex.loyers || 0,
-                rendement: rendement ?? ex.rendement,
+                // Le Sheet est toujours réécrit intégralement à chaque scan (loyers/rendement
+                // recalculés) → on fait confiance à la valeur fraîche même si elle est vide/0,
+                // plutôt que de garder indéfiniment une ancienne valeur en cache (ex: bug "2026%").
+                loyers, rendement,
                 ppm2: ppm2 ?? ex.ppm2,
                 title: b.title || ex.title,
                 url: b.url || ex.url,
@@ -489,9 +492,15 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
       {error&&<div style={{fontSize:12,color:'#791F1F',background:'#FCEBEB',border:'0.5px solid #F7C1C1',borderRadius:8,padding:'7px 10px',marginBottom:10}}>{error}</div>}
       {displayed.length>0&&(<>
         <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8,marginBottom:10}}>
-          {[['Annonces',displayed.length],['Rendement moy.',displayed.filter(l=>l.rendement).length?(displayed.filter(l=>l.rendement).reduce((s,l)=>s+l.rendement,0)/displayed.filter(l=>l.rendement).length).toFixed(1)+'%':'—'],['≥ 8%',displayed.filter(l=>l.rendement>=8).length],['Avec travaux',displayed.filter(l=>l.travaux).length],['Écarté',displayed.filter(l=>l.statut==='Écarté').length]].map(([label,val])=>(<div key={label} style={{background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'8px 12px'}}><div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:3}}>{label}</div><div style={{fontSize:18,fontWeight:500}}>{val}</div></div>))}
+          {[['Annonces',displayed.length],['Rendement moy.',displayed.filter(l=>l.rendement).length?(displayed.filter(l=>l.rendement).reduce((s,l)=>s+l.rendement,0)/displayed.filter(l=>l.rendement).length).toFixed(1)+'%':'—'],['Avec travaux',displayed.filter(l=>l.travaux).length],['Écarté',displayed.filter(l=>l.statut==='Écarté').length]].map(([label,val])=>(<div key={label} style={{background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'8px 12px'}}><div style={{fontSize:11,color:'var(--color-text-secondary)',marginBottom:3}}>{label}</div><div style={{fontSize:18,fontWeight:500}}>{val}</div></div>))}
         </div>
-        <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'var(--color-text-secondary)',cursor:'pointer',marginBottom:8}}><input type="checkbox" checked={showEcartes} onChange={e=>setShowEcartes(e.target.checked)}/>Afficher les biens écartés</label>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8,marginBottom:10}}>
+          {[['Sans rendement',l=>!l.rendement],['0 à 5%',l=>l.rendement>=0&&l.rendement<5],['5 à 8%',l=>l.rendement>=5&&l.rendement<8],['8 à 10%',l=>l.rendement>=8&&l.rendement<10],['> 10%',l=>l.rendement>=10]].map(([label,test])=>(<div key={label} style={{background:'var(--color-background-secondary)',borderRadius:'var(--border-radius-md)',padding:'6px 12px'}}><div style={{fontSize:10,color:'var(--color-text-tertiary)',marginBottom:2}}>{label}</div><div style={{fontSize:15,fontWeight:500}}>{displayed.filter(test).length}</div></div>))}
+        </div>
+        <div style={{display:'flex',gap:16,marginBottom:8}}>
+          <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'var(--color-text-secondary)',cursor:'pointer'}}><input type="checkbox" checked={showEcartes} onChange={e=>setShowEcartes(e.target.checked)}/>Afficher les biens écartés</label>
+          <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'var(--color-text-secondary)',cursor:'pointer'}}><input type="checkbox" checked={showExpired} onChange={e=>setShowExpired(e.target.checked)}/>Afficher les biens expirés</label>
+        </div>
         <div style={{border:'0.5px solid var(--color-border-tertiary)',borderRadius:'var(--border-radius-md)',overflow:'hidden'}}>
           <div style={{display:'grid',gridTemplateColumns:'2fr .6fr .8fr .8fr .8fr .7fr .8fr .8fr 90px',gap:4,padding:'6px 10px',fontSize:10,color:'var(--color-text-tertiary)',borderBottom:'0.5px solid var(--color-border-tertiary)',background:'var(--color-background-secondary)'}}>
             {[['title','Bien'],['cp','CP'],['price','Prix'],['surface','Surface'],['loyers','Loyers/an'],['ppm2','€/m²'],['rendement','Rendement'],['_contact','Contact'],['statut','Statut']].map(([col,label])=>(
@@ -501,7 +510,7 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
             ))}
           </div>
           {openDropdownId&&<div style={{position:'fixed',inset:0,zIndex:9}} onClick={()=>setOpenDropdownId(null)}/>}
-          {displayed.filter(l=>showEcartes||l.statut!=='Écarté').map(l=>{
+          {displayed.filter(l=>(showEcartes||l.statut!=='Écarté')&&(showExpired||!l.expired)).map(l=>{
             const contact=l.contactId?contacts[l.contactId]:null; const ecarte=l.statut==='Écarté';
             const jours=joursDepuis(l.date); const fade=ecarte?0.4:1;
             return(<div key={l.id} onClick={()=>onOpenBien(l,displayed.map(d=>d.id))} style={{display:'grid',gridTemplateColumns:'2fr .6fr .8fr .8fr .8fr .7fr .8fr .8fr 90px',gap:4,padding:'8px 10px',fontSize:12,borderBottom:'0.5px solid var(--color-border-tertiary)',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='var(--color-background-secondary)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
