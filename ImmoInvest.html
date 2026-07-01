@@ -737,7 +737,7 @@ function AnnuaireView({ contacts, setContacts, biens, onOpenContact }) {
       const name = (b.ownerName || '').trim();
       if (!name || existing.has(name.toLowerCase())) return;
       const id = 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-      toAdd[id] = { id, nom: name, type: b.ownerType === 'Professionnel' ? 'Agence' : b.ownerType === 'Particulier' ? 'Particulier' : 'Agence', telephone: b.ownerPhone || '', email: '', ville: b.ville || '', notes: '', adresse: '', siteWeb: '', parentId: '', interactions: [], createdAt: new Date().toISOString().slice(0,10) };
+      toAdd[id] = { id, nom: name, type: b.ownerType === 'Professionnel' ? 'Agence' : b.ownerType === 'Particulier' ? 'Particulier' : 'Agence', telephone: b.ownerPhone || '', email: '', ville: b.ville || '', notes: '', adresse: '', siteWeb: b.ownerRatesLink || '', parentId: '', interactions: [], createdAt: new Date().toISOString().slice(0,10) };
       existing.add(name.toLowerCase());
     });
     const n = Object.keys(toAdd).length;
@@ -804,6 +804,7 @@ function AnnuaireView({ contacts, setContacts, biens, onOpenContact }) {
             <div style={{display:'flex',gap:8,fontSize:11,alignItems:'center',flexShrink:0}}>
               {agence.telephone&&<span style={{color:'var(--color-text-secondary)'}}>{agence.telephone}</span>}
               <span style={{background:'#EEEDFE',color:'#3C3489',borderRadius:5,padding:'2px 7px'}}>{biensCount(agence.id)} bien(s)</span>
+              <button onClick={e=>{e.stopPropagation();window.open('https://www.google.com/search?q='+encodeURIComponent(agence.nom+(agence.ville?' '+agence.ville:'')),'_blank');}} title="Rechercher sur Google" style={{fontSize:11,padding:'3px 7px',borderRadius:5,border:'0.5px solid var(--color-border-secondary)',background:'var(--color-background-secondary)',cursor:'pointer',flexShrink:0}}>🔍</button>
               {children.length>0&&<button onClick={e=>{e.stopPropagation();setExpandedAgences(p=>({...p,[agence.id]:!p[agence.id]}));}} style={{fontSize:11,padding:'3px 8px',borderRadius:5,border:'0.5px solid #AFA9EC',background:'#EEEDFE',color:'#3C3489',cursor:'pointer',flexShrink:0}}>{exp?'▲':`${children.length} agent${children.length>1?'s':''} ▼`}</button>}
             </div>
           </div>
@@ -1211,7 +1212,7 @@ function App() {
   return (
     <div style={{display:'flex',height:'100vh',fontFamily:'var(--font-sans)'}}>
       <div style={{width:164,background:'var(--color-background-secondary)',borderRight:'0.5px solid var(--color-border-tertiary)',display:'flex',flexDirection:'column',padding:'14px 0',flexShrink:0}}>
-        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v35 · LBC + IA + Annuaire</span></div>
+        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v36 · LBC + IA + Annuaire</span></div>
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'4px 14px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Biens</div>
         {navItems.filter(n=>n.section==='biens').map(item=>(<div key={item.id} onClick={()=>handleNav(item.id)} style={{padding:'7px 14px',fontSize:12,color:navSection===item.id?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection===item.id?'var(--color-background-primary)':'transparent',borderRight:navSection===item.id?'2px solid #378ADD':'none',cursor:'pointer',fontWeight:navSection===item.id?500:400}}>{item.label}</div>))}
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'10px 14px 4px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Relation</div>
