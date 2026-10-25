@@ -140,15 +140,6 @@ function extractContactFromDesc(desc) {
   if (!tel && !email) return null;
   return { telephone: tel?.[1]?.replace(/[\s.-]/g,'') || '', email: email?.[0] || '', nom: agence?.[1]?.trim() || '' };
 }
-async function analyseTravauxIA(desc, title) {
-  if (!desc) return null;
-  const kw = ['travaux','rénov','rafraîch','toiture','électric','plomberie','isolation','ravalement','chauffage','fenêtre','à restaurer','à rénover'];
-  if (!kw.some(k => desc.toLowerCase().includes(k))) return null;
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:100, messages:[{role:'user',content:`Annonce:"${title}". Desc:"${desc.slice(0,600)}". Liste 5 mots max les travaux. Si aucun précis:"travaux non détaillés". Réponds uniquement la liste.`}]})});
-    const d = await res.json(); return d.content?.[0]?.text?.trim() || null;
-  } catch { return 'travaux mentionnés'; }
-}
 function useStorage(key) {
   const [data, setDataState] = useState({});
   const loaded = useRef(false);
@@ -296,7 +287,7 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
     const upd = [...ads];
     for (let i=0; i<Math.min(upd.length,15); i++) {
       if (!upd[i].travauxAnalyse) {
-        const t = await analyseTravauxIA(upd[i].desc, upd[i].title);
+        const t = null; // v40 : analyse travaux navigateur supprimée (pas de clé côté front)
         upd[i] = {...upd[i], travaux:t, travauxAnalyse:true};
         setListings([...upd]); updateBien(upd[i]);
       }
@@ -549,7 +540,7 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
     if (!bien.desc) { setIaError('Pas de description disponible — relance le bookmarklet pour importer ce bien.'); return; }
     setIaLoading(true); setIaResult(null); setIaError(null);
     try {
-      const res = await fetch(`${APPS_SCRIPT_URL}?action=analyzeAnnonce&id=${encodeURIComponent(bien.id)}`);
+      const res = await fetch(`${APPS_SCRIPT_URL}?action=analyzeAnnonce&force=1&id=${encodeURIComponent(bien.id)}`);
       const data = await res.json();
       if (!data.success) throw new Error(data.error || 'Erreur inconnue');
       setIaResult(data.result);
@@ -564,6 +555,9 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
       if (data.result.travaux_type)       patch.travaux_type = data.result.travaux_type;
       if (data.result.travaux_resume)     patch.travaux_resume = data.result.travaux_resume;
       if (data.result.type_bien_ia)       patch.type_bien_ia = data.result.type_bien_ia;
+      if (data.result.score_ia)  patch.score_ia = data.result.score_ia;
+      if (data.result.raison_ia) patch.raison_ia = data.result.raison_ia;
+      if (data.result.loyer_source) patch.loyer_source = data.result.loyer_source;
       patch.ia_analysed = new Date().toISOString().slice(0,10);
       update(patch);
     } catch(err) { setIaError(err.message); }
@@ -636,6 +630,8 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
           <a href={bien.url} target="_blank" rel="noreferrer" style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'0.5px solid var(--color-border-secondary)',color:'var(--color-text-secondary)',textDecoration:'none'}}>Voir ↗</a>
         </div>
       </div>
+
+      {bien.score_ia&&(()=>{const sc=bien.score_ia;const col=sc==='À écarter'?['#FCEBEB','#F7C1C1','#791F1F']:sc==='À étudier'?['#EAF3DE','#C0DD97','#27500A']:['#FAEEDA','#FAC775','#633806'];return (<div style={{marginBottom:12,padding:'8px 12px',borderRadius:'var(--border-radius-md)',background:col[0],border:`0.5px solid ${col[1]}`,color:col[2],fontSize:12}}><span style={{fontWeight:500}}>🤖 Proposition IA : {sc}</span>{bien.raison_ia&&<span> — {bien.raison_ia}</span>}{bien.loyer_source&&<span style={{opacity:0.7}}> (loyer : {bien.loyer_source})</span>}<div style={{fontSize:11,opacity:0.75,marginTop:3}}>Suggestion seulement : le statut n'est pas modifié, à toi de décider.</div></div>);})()}
 
       {/* ── SECTION 1 : Informations + Rendement ── */}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
@@ -1221,7 +1217,7 @@ function App() {
   return (
     <div style={{display:'flex',height:'100vh',fontFamily:'var(--font-sans)'}}>
       <div style={{width:164,background:'var(--color-background-secondary)',borderRight:'0.5px solid var(--color-border-tertiary)',display:'flex',flexDirection:'column',padding:'14px 0',flexShrink:0}}>
-        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v39 · LBC + IA + Annuaire</span></div>
+        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v40 · LBC + IA proposée + Annuaire</span></div>
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'4px 14px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Biens</div>
         {navItems.filter(n=>n.section==='biens').map(item=>(<div key={item.id} onClick={()=>handleNav(item.id)} style={{padding:'7px 14px',fontSize:12,color:navSection===item.id?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection===item.id?'var(--color-background-primary)':'transparent',borderRight:navSection===item.id?'2px solid #378ADD':'none',cursor:'pointer',fontWeight:navSection===item.id?500:400}}>{item.label}</div>))}
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'10px 14px 4px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Relation</div>
