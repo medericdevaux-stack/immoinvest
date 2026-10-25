@@ -57,6 +57,106 @@ async function syncFieldToSheet(id, field, value) {
   } catch(e) { console.warn('syncFieldToSheet failed', e); }
 }
 
+
+// ── v41 : analyse d'investissement ──
+const IA_FIELDS = ['score_ia','raison_ia','loyer_source','lots_json','rendement_actuel','rendement_cible','rendement_net_actuel','rendement_net_cible','prix_max_8pct_actuel','prix_max_8pct_cible','marche_json','hypotheses_json','synthese_ia','points_forts_ia','risques_ia','questions_ia','negociation_ia','dossier_ia','dossier_date','analyse_version'];
+const jp = (v, d) => { if (v===undefined||v===null||v==='') return d; if (typeof v==='object') return v; try { return JSON.parse(v); } catch { return d; } };
+const fmtN = (v, suf='') => (v===null||v===undefined||v==='') ? '—' : Number(v).toLocaleString('fr-FR',{maximumFractionDigits:1}) + suf;
+function pickIA(b, ex) { const o = {}; IA_FIELDS.forEach(k => { const v = b[k]; o[k] = (v!==undefined && v!=='') ? v : ex[k]; }); return o; }
+// Transforme le résultat de analyzeAnnonce en champs de bien (mêmes formats que la Sheet)
+function patchFromResult(r) {
+  const p = {};
+  ['score_ia','raison_ia','loyer_source','rendement_actuel','rendement_cible','rendement_net_actuel','rendement_net_cible','prix_max_8pct_actuel','prix_max_8pct_cible','synthese_ia'].forEach(k => { if (r[k]!==undefined && r[k]!==null && r[k]!=='') p[k] = r[k]; });
+  if (r.lots)            p.lots_json = JSON.stringify(r.lots);
+  if (r.points_forts_ia) p.points_forts_ia = JSON.stringify(r.points_forts_ia);
+  if (r.risques_ia)      p.risques_ia = JSON.stringify(r.risques_ia);
+  if (r.questions_ia)    p.questions_ia = JSON.stringify(r.questions_ia);
+  if (r.negociation_ia)  p.negociation_ia = JSON.stringify(r.negociation_ia);
+  if (r.marche_json)     p.marche_json = JSON.stringify(r.marche_json);
+  if (r.hypotheses_json) p.hypotheses_json = JSON.stringify(r.hypotheses_json);
+  return p;
+}
+const rendColor = (x) => x===null||x===undefined||x===''?'var(--color-text-tertiary)':Number(x)>=8?'#27500A':Number(x)>=6?'#633806':'#791F1F';
+
+function AnalyseInvest({ bien, onDeep, deepLoading, deepError }) {
+  const lots = jp(bien.lots_json, []);
+  const marche = jp(bien.marche_json, null);
+  const fortsIA = jp(bien.points_forts_ia, []);
+  const risques = jp(bien.risques_ia, []);
+  const questions = jp(bien.questions_ia, []);
+  const nego = jp(bien.negociation_ia, null);
+  const hyp = jp(bien.hypotheses_json, null);
+  const [copied, setCopied] = useState(false);
+  const has = bien.rendement_actuel || bien.rendement_cible || lots.length || bien.synthese_ia;
+  if (!has) return null;
+  const box = {border:'0.5px solid var(--color-border-tertiary)',borderRadius:'var(--border-radius-md)',padding:'10px 12px'};
+  const h = {fontSize:11,fontWeight:500,color:'var(--color-text-secondary)',marginBottom:8,textTransform:'uppercase'};
+  const tiles = [
+    ['Rendement actuel', bien.rendement_actuel, 'loyers en place'],
+    ['Rendement cible', bien.rendement_cible, 'lots libres relocés'+(hyp&&hyp.travaux_eur?' + travaux':'')],
+    ['Net actuel', bien.rendement_net_actuel, hyp&&hyp.charges_estimees?'charges estimées':'après taxe foncière/charges'],
+    ['Net cible', bien.rendement_net_cible, hyp&&hyp.charges_estimees?'charges estimées':'après taxe foncière/charges'],
+  ];
+  const price = Number(bien.price)||0;
+  const dec = (pm) => (pm && price>0) ? Math.round((1 - pm/price)*100) : null;
+  return (
+    <div style={{marginBottom:12,...box,background:'var(--color-background-primary)'}}>
+      <div style={{...h,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span>📊 Analyse d'investissement</span>
+        <span style={{fontSize:10,fontWeight:400,textTransform:'none'}}>{bien.analyse_version||''}</span>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:10}}>
+        {tiles.map(([label,val,sub])=>(<div key={label} style={{background:'var(--color-background-secondary)',borderRadius:6,padding:'8px 10px'}}>
+          <div style={{fontSize:10,color:'var(--color-text-secondary)'}}>{label}</div>
+          <div style={{fontSize:20,fontWeight:500,color:rendColor(val)}}>{val!==undefined&&val!==null&&val!==''?fmtN(val,' %'):'—'}</div>
+          <div style={{fontSize:10,color:'var(--color-text-tertiary)'}}>{sub}</div>
+        </div>))}
+      </div>
+      {(bien.prix_max_8pct_actuel||bien.prix_max_8pct_cible)&&<div style={{fontSize:12,marginBottom:10,padding:'6px 8px',background:'var(--color-background-secondary)',borderRadius:6}}>
+        <span style={{fontWeight:500}}>🎯 Prix pour 8 % brut : </span>
+        {bien.prix_max_8pct_actuel&&<span>sur loyers actuels <b>{fmtN(bien.prix_max_8pct_actuel,' €')}</b>{dec(bien.prix_max_8pct_actuel)!==null&&<span style={{color:'var(--color-text-secondary)'}}> ({dec(bien.prix_max_8pct_actuel)>0?'−':'+'}{Math.abs(dec(bien.prix_max_8pct_actuel))} % vs prix demandé)</span>}</span>}
+        {bien.prix_max_8pct_actuel&&bien.prix_max_8pct_cible&&<span> · </span>}
+        {bien.prix_max_8pct_cible&&<span>sur loyers cibles <b>{fmtN(bien.prix_max_8pct_cible,' €')}</b>{dec(bien.prix_max_8pct_cible)!==null&&<span style={{color:'var(--color-text-secondary)'}}> ({dec(bien.prix_max_8pct_cible)>0?'−':'+'}{Math.abs(dec(bien.prix_max_8pct_cible))} %)</span>}</span>}
+        {nego&&nego.signaux&&nego.signaux.length>0&&<div style={{marginTop:4,color:'#633806'}}>Signaux de négociation : {nego.signaux.join(' · ')}</div>}
+      </div>}
+      {lots.length>0&&<div style={{marginBottom:10}}>
+        <div style={h}>Lots</div>
+        <div style={{fontSize:12}}>
+          {lots.map((l,i)=>(<div key={i} style={{display:'grid',gridTemplateColumns:'2fr 1fr .8fr 1.2fr',gap:6,padding:'4px 0',borderBottom:'0.5px solid var(--color-border-tertiary)'}}>
+            <span>{l.designation}<span style={{color:'var(--color-text-tertiary)'}}> · {l.usage}</span></span>
+            <span style={{color:'var(--color-text-secondary)'}}>{l.surface?l.surface+' m²':'—'}</span>
+            <span style={{color:l.statut==='libre'?'#633806':'#27500A'}}>{l.statut==='libre'?'Libre':l.statut==='loue'?'Loué':'?'}</span>
+            <span style={{textAlign:'right'}}>{l.statut==='libre'?(l.estime_an?<i>~{fmtN(l.estime_an,' €/an')}</i>:'—'):l.loyer_an?fmtN(l.loyer_an,' €/an')+(l.tva_incluse?' HT':''):'—'}</span>
+          </div>))}
+        </div>
+      </div>}
+      {marche&&(marche.ref_m2||(marche.risques_communaux&&marche.risques_communaux.length>0))&&<div style={{marginBottom:10,fontSize:12}}>
+        <div style={h}>Marché (données publiques)</div>
+        {marche.ref_m2&&<div>Prix demandé <b>{fmtN(marche.ppm2,' €/m²')}</b> · médiane des ventes ({marche.ref_type}, {marche.ref_n} ventes) <b>{fmtN(marche.ref_m2,' €/m²')}</b>{marche.ecart_pct!==null&&marche.ecart_pct!==undefined&&<span style={{fontWeight:500,color:marche.ecart_pct<=0?'#27500A':'#791F1F'}}> → {marche.ecart_pct>0?'+':''}{fmtN(marche.ecart_pct,' %')}</span>}</div>}
+        {marche.risques_communaux&&marche.risques_communaux.length>0&&<div style={{color:'var(--color-text-secondary)',marginTop:2}}>Risques recensés sur la commune : {marche.risques_communaux.join(', ')}</div>}
+      </div>}
+      {bien.synthese_ia&&<div style={{fontSize:12,marginBottom:10,padding:'8px 10px',background:'#EAF3DE',border:'0.5px solid #C0DD97',borderRadius:6,color:'#27500A'}}><b>Synthèse : </b>{bien.synthese_ia}</div>}
+      {(fortsIA.length>0||risques.length>0)&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10,fontSize:12}}>
+        <div><div style={h}>Points forts</div>{fortsIA.length?fortsIA.map((x,i)=><div key={i} style={{padding:'2px 0'}}>✅ {x}</div>):<span style={{color:'var(--color-text-tertiary)'}}>—</span>}</div>
+        <div><div style={h}>Risques / alertes</div>{risques.length?risques.map((x,i)=><div key={i} style={{padding:'2px 0'}}>⚠️ {x}</div>):<span style={{color:'var(--color-text-tertiary)'}}>—</span>}</div>
+      </div>}
+      {questions.length>0&&<div style={{marginBottom:10,fontSize:12}}>
+        <div style={{...h,display:'flex',justifyContent:'space-between'}}><span>Questions à poser à l'agent</span>
+          <button onClick={()=>{try{navigator.clipboard.writeText(questions.map(q=>'- '+q).join('\n'));setCopied(true);setTimeout(()=>setCopied(false),1500);}catch(e){}}} style={{fontSize:10,padding:'2px 8px',borderRadius:5,border:'0.5px solid var(--color-border-secondary)',background:'var(--color-background-primary)',cursor:'pointer',textTransform:'none'}}>{copied?'Copié ✓':'Copier'}</button></div>
+        {questions.map((q,i)=><div key={i} style={{padding:'2px 0'}}>• {q}</div>)}
+      </div>}
+      <div style={{borderTop:'0.5px solid var(--color-border-tertiary)',paddingTop:10}}>
+        <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:6}}>
+          <button onClick={onDeep} disabled={deepLoading} style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'0.5px solid #B5D4F4',background:'#E6F1FB',color:'#0C447C',cursor:deepLoading?'wait':'pointer'}}>{deepLoading?'⏳ Recherche web en cours (jusqu\'à 1 min)…':'🔎 Analyse approfondie (recherche web)'}</button>
+          {bien.dossier_date&&<span style={{fontSize:10,color:'var(--color-text-tertiary)'}}>dossier du {formatDate(bien.dossier_date)}</span>}
+        </div>
+        {deepError&&<div style={{fontSize:12,color:'#791F1F',background:'#FCEBEB',border:'0.5px solid #F7C1C1',borderRadius:6,padding:'6px 8px'}}>⚠ {deepError}</div>}
+        {bien.dossier_ia&&<div style={{fontSize:12,whiteSpace:'pre-wrap',lineHeight:1.5}}>{bien.dossier_ia}</div>}
+      </div>
+    </div>
+  );
+}
+
 // Ajoute une interaction dans la Sheet Interactions dédiée
 async function pushInteractionToSheet(interaction, bienId, bienTitle) {
   try {
@@ -342,6 +442,7 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
                 ia_analysed: b.ia_analysed || ex.ia_analysed,
                 score_ia: b.score_ia || ex.score_ia,
                 raison_ia: b.raison_ia || ex.raison_ia,
+                ...pickIA(b, ex),
               };
             } else {
               next[bid] = {
@@ -394,7 +495,7 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
         const res  = await fetch(`${APPS_SCRIPT_URL}?action=analyzeAnnonce&id=${encodeURIComponent(l.id)}`);
         const data = await res.json();
         if (data.success && data.result) {
-          const patch = { score_ia: data.result.score_ia, raison_ia: data.result.raison_ia, loyer_source: data.result.loyer_source, ia_analysed: new Date().toISOString().slice(0,10) };
+          const patch = { ...patchFromResult(data.result), ia_analysed: new Date().toISOString().slice(0,10) };
           if (data.result.loyer_actuel) patch.loyers = data.result.loyer_actuel;
           if (data.result.loyer_potentiel) patch.loyer_potentiel = data.result.loyer_potentiel;
           updateBien({ ...biens[l.id], ...l, ...patch });
@@ -505,7 +606,7 @@ function SearchView({ onOpenBien, biens, updateBien, setBiens, contacts }) {
             const contact=l.contactId?contacts[l.contactId]:null; const ecarte=l.statut==='Écarté';
             const jours=joursDepuis(l.date); const fade=ecarte?0.4:1;
             return(<div key={l.id} onClick={()=>onOpenBien(l,displayed.map(d=>d.id))} style={{display:'grid',gridTemplateColumns:'2fr .6fr .8fr .8fr .8fr .7fr .8fr .8fr 90px',gap:4,padding:'8px 10px',fontSize:12,borderBottom:'0.5px solid var(--color-border-tertiary)',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='var(--color-background-secondary)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-              <div style={{opacity:fade}}><div style={{fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textDecoration:ecarte?'line-through':'none'}}>{cleanTitle(l.title)}</div><div style={{marginTop:2,display:'flex',gap:4,alignItems:'center'}}>{l.date&&<span style={{fontSize:10,color:'var(--color-text-primary)',fontWeight:500}}>Publié le {formatDate(l.date)}</span>}{jours!==null&&<span style={{fontSize:10,color:'var(--color-text-tertiary)'}}>il y a {jours} j</span>}{l.travaux&&<span style={{fontSize:10,color:'#633806',background:'#FAEEDA',border:'0.5px solid #FAC775',borderRadius:4,padding:'1px 5px'}}>⚠ travaux</span>}{l.isNew&&<span style={{fontSize:10,color:'#0C447C',background:'#E6F1FB',border:'0.5px solid #B5D4F4',borderRadius:4,padding:'1px 5px'}}>nouveau</span>}{l.expired&&<span style={{fontSize:10,color:'#791F1F',background:'#FCEBEB',border:'0.5px solid #F7C1C1',borderRadius:4,padding:'1px 5px'}}>expiré</span>}</div></div>
+              <div style={{opacity:fade}}><div style={{fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textDecoration:ecarte?'line-through':'none'}}>{cleanTitle(l.title)}</div><div style={{marginTop:2,display:'flex',gap:4,alignItems:'center'}}>{l.date&&<span style={{fontSize:10,color:'var(--color-text-primary)',fontWeight:500}}>Publié le {formatDate(l.date)}</span>}{l.score_ia&&<span title={l.raison_ia||''} style={{fontSize:10,borderRadius:4,padding:'1px 5px',border:'0.5px solid',borderColor:l.score_ia==='À étudier'?'#C0DD97':l.score_ia==='À écarter'?'#F7C1C1':'#FAC775',background:l.score_ia==='À étudier'?'#EAF3DE':l.score_ia==='À écarter'?'#FCEBEB':'#FAEEDA',color:l.score_ia==='À étudier'?'#27500A':l.score_ia==='À écarter'?'#791F1F':'#633806'}}>🤖 {l.score_ia}{l.rendement_cible?' · cible '+l.rendement_cible+' %':''}</span>}{jours!==null&&<span style={{fontSize:10,color:'var(--color-text-tertiary)'}}>il y a {jours} j</span>}{l.travaux&&<span style={{fontSize:10,color:'#633806',background:'#FAEEDA',border:'0.5px solid #FAC775',borderRadius:4,padding:'1px 5px'}}>⚠ travaux</span>}{l.isNew&&<span style={{fontSize:10,color:'#0C447C',background:'#E6F1FB',border:'0.5px solid #B5D4F4',borderRadius:4,padding:'1px 5px'}}>nouveau</span>}{l.expired&&<span style={{fontSize:10,color:'#791F1F',background:'#FCEBEB',border:'0.5px solid #F7C1C1',borderRadius:4,padding:'1px 5px'}}>expiré</span>}</div></div>
               <span style={{color:'var(--color-text-secondary)',fontSize:11,opacity:fade}}>{l.cp}</span>
               <span style={{opacity:fade}}>{l.price.toLocaleString('fr-FR')} €</span>
               <span style={{opacity:fade}}>{l.surface?l.surface+' m²':'—'}</span>
@@ -534,7 +635,20 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
   const [iaLoading, setIaLoading] = useState(false);
   const [iaResult, setIaResult] = useState(null);
   const [iaError, setIaError] = useState(null);
-  useEffect(() => { setBien(init); setIaResult(null); setIaError(null); }, [init.id]);
+  useEffect(() => { setBien(init); setIaResult(null); setIaError(null); setDeepError(null); }, [init.id]);
+
+  const [deepLoading, setDeepLoading] = useState(false);
+  const [deepError, setDeepError] = useState(null);
+  const deepAnalyze = async () => {
+    setDeepLoading(true); setDeepError(null);
+    try {
+      const res = await fetch(`${APPS_SCRIPT_URL}?action=deepAnalyze&id=${encodeURIComponent(bien.id)}`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Erreur inconnue');
+      update({ dossier_ia: data.dossier_ia, dossier_date: data.dossier_date });
+    } catch(err) { setDeepError(err.message + ' — si c\'est un délai dépassé, réessaie une fois.'); }
+    finally { setDeepLoading(false); }
+  };
 
   const analyzeWithIA = async () => {
     if (!bien.desc) { setIaError('Pas de description disponible — relance le bookmarklet pour importer ce bien.'); return; }
@@ -555,9 +669,7 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
       if (data.result.travaux_type)       patch.travaux_type = data.result.travaux_type;
       if (data.result.travaux_resume)     patch.travaux_resume = data.result.travaux_resume;
       if (data.result.type_bien_ia)       patch.type_bien_ia = data.result.type_bien_ia;
-      if (data.result.score_ia)  patch.score_ia = data.result.score_ia;
-      if (data.result.raison_ia) patch.raison_ia = data.result.raison_ia;
-      if (data.result.loyer_source) patch.loyer_source = data.result.loyer_source;
+      Object.assign(patch, patchFromResult(data.result));
       patch.ia_analysed = new Date().toISOString().slice(0,10);
       update(patch);
     } catch(err) { setIaError(err.message); }
@@ -632,6 +744,8 @@ function BienDetail({ bien: init, onUpdate, contacts, setContacts, onOpenContact
       </div>
 
       {bien.score_ia&&(()=>{const sc=bien.score_ia;const col=sc==='À écarter'?['#FCEBEB','#F7C1C1','#791F1F']:sc==='À étudier'?['#EAF3DE','#C0DD97','#27500A']:['#FAEEDA','#FAC775','#633806'];return (<div style={{marginBottom:12,padding:'8px 12px',borderRadius:'var(--border-radius-md)',background:col[0],border:`0.5px solid ${col[1]}`,color:col[2],fontSize:12}}><span style={{fontWeight:500}}>🤖 Proposition IA : {sc}</span>{bien.raison_ia&&<span> — {bien.raison_ia}</span>}{bien.loyer_source&&<span style={{opacity:0.7}}> (loyer : {bien.loyer_source})</span>}<div style={{fontSize:11,opacity:0.75,marginTop:3}}>Suggestion seulement : le statut n'est pas modifié, à toi de décider.</div></div>);})()}
+
+      <AnalyseInvest bien={bien} onDeep={deepAnalyze} deepLoading={deepLoading} deepError={deepError}/>
 
       {/* ── SECTION 1 : Informations + Rendement ── */}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
@@ -1217,7 +1331,7 @@ function App() {
   return (
     <div style={{display:'flex',height:'100vh',fontFamily:'var(--font-sans)'}}>
       <div style={{width:164,background:'var(--color-background-secondary)',borderRight:'0.5px solid var(--color-border-tertiary)',display:'flex',flexDirection:'column',padding:'14px 0',flexShrink:0}}>
-        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v40 · LBC + IA proposée + Annuaire</span></div>
+        <div style={{padding:'0 14px 14px',fontSize:14,fontWeight:500,borderBottom:'0.5px solid var(--color-border-tertiary)',marginBottom:8}}>ImmoInvest<span style={{fontSize:10,fontWeight:400,color:'var(--color-text-tertiary)',display:'block',marginTop:2}}>v41 · LBC + analyse IA + Annuaire</span></div>
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'4px 14px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Biens</div>
         {navItems.filter(n=>n.section==='biens').map(item=>(<div key={item.id} onClick={()=>handleNav(item.id)} style={{padding:'7px 14px',fontSize:12,color:navSection===item.id?'var(--color-text-primary)':'var(--color-text-secondary)',background:navSection===item.id?'var(--color-background-primary)':'transparent',borderRight:navSection===item.id?'2px solid #378ADD':'none',cursor:'pointer',fontWeight:navSection===item.id?500:400}}>{item.label}</div>))}
         <div style={{fontSize:10,color:'var(--color-text-tertiary)',padding:'10px 14px 4px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Relation</div>
