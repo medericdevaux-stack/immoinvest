@@ -40,7 +40,7 @@ window.storage = {
 <script type="text/babel">
 const { useState, useCallback, useEffect, useRef, useMemo } = React;
 
-const FRONT_VERSION = 'v41.1';   // doit correspondre à VERSION dans Code.gs (contrôle affiché dans la barre latérale)
+const FRONT_VERSION = 'v41.2';   // doit correspondre à VERSION dans Code.gs (contrôle affiché dans la barre latérale)
 const APPS_SCRIPT_URL = 'https://immoinvest-proxy.mederic-de-vaux.workers.dev';
 const STORAGE_BIENS = 'immo_invest_biens_v3';
 const STORAGE_CONTACTS = 'immo_invest_contacts_v3';
@@ -176,7 +176,14 @@ function SyncBanner() {
 const IA_FIELDS = ['ia_analysed','score_ia','raison_ia','loyer_source','type_bien_ia','nb_lots','dpe','ges','annee_construction','loyer_actuel','loyer_potentiel','travaux_type','travaux_resume','lots_json','rendement_actuel','rendement_cible','rendement_net_actuel','rendement_net_cible','prix_max_8pct_actuel','prix_max_8pct_cible','marche_json','hypotheses_json','synthese_ia','points_forts_ia','risques_ia','questions_ia','negociation_ia','dossier_ia','dossier_date','analyse_version','ia_erreur','ia_tentatives'];
 // Champs effacés localement avant d'appliquer une nouvelle analyse (le serveur fait de même dans la Sheet)
 const ANALYSE_LOCAL = ['score_ia','raison_ia','loyer_source','loyer_actuel','loyer_potentiel','dpe','ges','nb_lots','annee_construction','travaux_type','travaux_resume','type_bien_ia','lots_json','rendement_actuel','rendement_cible','rendement_net_actuel','rendement_net_cible','prix_max_8pct_actuel','prix_max_8pct_cible','marche_json','hypotheses_json','synthese_ia','points_forts_ia','risques_ia','questions_ia','negociation_ia','ia_erreur','ia_tentatives'];
-function pickIA(b, ex) { const o = {}; IA_FIELDS.forEach(k => { o[k] = b[k] !== undefined ? b[k] : ex[k]; }); return o; }
+function pickIA(b, ex) {
+  const o = {};
+  IA_FIELDS.forEach(k => { o[k] = b[k] !== undefined ? b[k] : ex[k]; });
+  // v41.2 : un bien écarté par le serveur (analyse automatique) s'affiche « Écarté » ici aussi,
+  // sauf si tu as déjà posé toi-même un autre statut que « Nouveau »
+  if (b.statut === 'Écarté' && (!ex.statut || ex.statut === 'Nouveau')) { o.statut = 'Écarté'; o.statutDate = b.statutDate || ex.statutDate; }
+  return o;
+}
 // Transforme le résultat de analyzeAnnonce en champs de bien (mêmes formats que la Sheet)
 function patchFromResult(r) {
   const p = {};
