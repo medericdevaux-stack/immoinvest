@@ -95,7 +95,7 @@ function calcMensualite(m, t, d) {
   return (m * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
 }
 
-// ─── Synchronisation vers la Sheet (v41.1 : les échecs sont visibles, jamais silencieux) ───
+// ─── Synchronisation vers la Sheet (v41.2 : les échecs sont visibles, jamais silencieux) ───
 const syncState = { failures: [] };
 const syncListeners = new Set();
 function emitSync() { const snap = { failures: syncState.failures.slice() }; syncListeners.forEach(f => f(snap)); }
